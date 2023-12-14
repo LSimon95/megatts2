@@ -5,6 +5,15 @@ from phonemizer.separator import Separator
 from tn.chinese.normalizer import Normalizer
 
 import re
+from dataclasses import dataclass
+
+from lhotse.features import FeatureExtractor
+from lhotse.utils import Seconds, compute_num_frames
+
+import numpy as np
+import torch
+
+from typing import Union
 
 import torchaudio as ta
 
@@ -55,6 +64,46 @@ class TextTokenizer:
                     if len(phone):
                         tokens.append(phone)
         return tokens
+
+@dataclass
+class AudioFeatExtraConfig:
+    frame_shift: Seconds = 320.0 / 16000
+    feature_dim: int = 128
+
+class MelSpecExtractor(FeatureExtractor):
+    name = "mel_spec"
+    config_type = AudioFeatExtraConfig
+
+    @property
+    def frame_shift(self) -> Seconds:
+        return self.config.frame_shift
+
+    def feature_dim(self, sampling_rate: int) -> int:
+        return self.config.feature_dim
+
+    def extract(self, samples: Union[np.ndarray, torch.Tensor], sampling_rate: int) -> np.ndarray:
+        if not isinstance(samples, torch.Tensor):
+            samples = torch.from_numpy(samples)
+        torch.set_num_threads(1)
+
+        mel_spec = ta.transforms.MelSpectrogram(
+            sample_rate=sampling_rate,
+            n_fft=1024,
+            win_length=640,
+            hop_length=320,
+            n_mels=128,
+            f_min=0,
+            f_max=None,
+            power=1.0,
+        )(samples)
+        duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
+        num_frames = compute_num_frames(
+            duration=duration,
+            frame_shift=self.frame_shift,
+            sampling_rate=sampling_rate,
+        )
+        return mel_spec.squeeze(0).permute(1, 0)[:num_frames, :].numpy()
+
 
 if __name__ == '__main__':
     tt = TextTokenizer()
