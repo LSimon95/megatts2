@@ -89,8 +89,8 @@ class MelSpecExtractor(FeatureExtractor):
         mel_spec = ta.transforms.MelSpectrogram(
             sample_rate=sampling_rate,
             n_fft=1024,
-            win_length=640,
-            hop_length=320,
+            win_length=480,
+            hop_length=240,
             n_mels=128,
             f_min=0,
             f_max=None,
