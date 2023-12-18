@@ -16,12 +16,27 @@ import torch
 from typing import Union
 
 import torchaudio as ta
+import re
+
+def get_pinyin2ity():
+    pinyin2lty = {}
+    with open('utils/mandarin_pinyin_to_mfa_lty.dict', 'r') as f:
+        lines = f.readlines()
+
+        for line in lines:
+            ele = re.split(r'\t', line)
+
+            ity_phones = re.split(r'[ ]+', ele[-1])
+            pinyin2lty[ele[0]] = ity_phones
+
+    return pinyin2lty
 
 class TextTokenizer:
     def __init__(self) -> None:
 
         self.normalizer = Normalizer()
         self.separator = Separator(word="_", syllable="-", phone="|")
+        self.pinyin2ity = get_pinyin2ity()
 
     def phonemize(self, text: str) -> str:
         text = self.normalizer.normalize(text)
@@ -56,14 +71,17 @@ class TextTokenizer:
             [phones for phones in phonemizeds])
         return phonemizeds
 
-    def tokenize(self, text):
-        tokens = []
+    def to_list(self, text):
+        phones = []
         for word in re.split('([_-])', self.phonemize(text.strip())):
             if len(word):
                 for phone in re.split('\|', word):
                     if len(phone):
-                        tokens.append(phone)
-        return tokens
+                        if re.match(r"[a-z']+", phone):
+                            phones.append(phone)
+                        else:
+                            phones += self.pinyin2ity[phone]
+        return phones
 
 @dataclass
 class AudioFeatExtraConfig:
