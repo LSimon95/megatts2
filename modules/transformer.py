@@ -3,13 +3,15 @@ from ctypes import Union
 
 import torch
 from torch import nn
-import xformers.ops as xops
-
+from torch.nn import functional as F
 from einops import rearrange
+
+from utils.utils import make_attn_mask
 
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, qkv_dim,  n_heads=8, dropout=0.):
@@ -19,6 +21,7 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads
         self.head_dim = qkv_dim // n_heads
         self.dropout = dropout
+        self.qkv_dim = qkv_dim
 
         self.w_q = nn.Linear(qkv_dim, qkv_dim, bias=True)
         self.w_k = nn.Linear(qkv_dim, qkv_dim, bias=True)
@@ -31,7 +34,10 @@ class MultiHeadAttention(nn.Module):
 
     def forward(self, q, kv=None, mask=None):
 
-        if kv is None:            
+        bsz, tgt_len, _ = q.size()
+        src_len = kv.size(1) if kv is not None else tgt_len
+
+        if kv is None:
             k = self.w_k(q)
             v = self.w_v(q)
             q = self.w_q(q)
@@ -40,15 +46,15 @@ class MultiHeadAttention(nn.Module):
             v = self.w_v(kv)
             q = self.w_q(q)
 
+        
+        q = q.view(bsz, self.n_heads, tgt_len, self.head_dim)
+        k = k.view(bsz, self.n_heads, src_len, self.head_dim)
+        v = v.view(bsz, self.n_heads, src_len, self.head_dim)
 
-        q = rearrange(q, 'b t (h d) -> b t h d', h=self.n_heads)
-        k = rearrange(k, 'b t (h d) -> b t h d', h=self.n_heads)
-        v = rearrange(v, 'b t (h d) -> b t h d', h=self.n_heads)
+        att = F.scaled_dot_product_attention(
+            q, k, v, mask, self.dropout, False)
+        att = att.permute(2, 0, 1, 3).contiguous().view(bsz, tgt_len, self.qkv_dim)
 
-        att = xops.memory_efficient_attention(
-            q, k, v, attn_bias=mask, p=self.dropout)
-
-        att = rearrange(att, 'b t h d -> b t (h d)')
         return self.out_proj(att)
 
 
@@ -59,6 +65,7 @@ class TransformerDecoderLayer(nn.Module):
         self.dim = dim
         self.query_dim = dim
         self.conv_ff = conv_ff
+        self.n_heads = n_heads
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
@@ -89,8 +96,8 @@ class TransformerDecoderLayer(nn.Module):
             mask: torch.Tensor = None,
     ):
 
-        x = x + self.attn1(self.norm1(x), mask)
-        x = x + self.attn2(self.norm2(x), context)
+        x = x + self.attn1(self.norm1(x), mask=mask)
+        x = x + self.attn2(self.norm2(x), kv=context)
         if self.conv_ff:
             x = x + self.ff(self.norm3(x).transpose(1, 2)).transpose(1, 2)
         else:
@@ -104,6 +111,7 @@ class TransformerEncoderLayer(nn.Module):
 
         self.dim = dim
         self.conv_ff = conv_ff
+        self.n_heads = n_heads
 
         self.norm1 = nn.LayerNorm(dim)
         self.norm2 = nn.LayerNorm(dim)
@@ -131,7 +139,7 @@ class TransformerEncoderLayer(nn.Module):
         mask: torch.Tensor = None
     ):
 
-        x = x + self.attn(self.norm1(x), mask)
+        x = x + self.attn(self.norm1(x), mask=mask)
         if self.conv_ff:
             x = x + self.ff(self.norm2(x).transpose(1, 2)).transpose(1, 2)
         else:
@@ -156,8 +164,10 @@ class TransformerDecoder(nn.Module):
         self,
         x: torch.Tensor,
         context: torch.Tensor,
-        mask: torch.Tensor = None,
+        x_lens: torch.Tensor,
     ) -> torch.Tensor:
+
+        mask = make_attn_mask(x_lens, self.layers[0].n_heads)
 
         for layer in self.layers:
             x = layer(x, context, mask=mask)
@@ -182,8 +192,10 @@ class TransformerEncoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: torch.Tensor = None,
+        x_lens: torch.Tensor,
     ) -> torch.Tensor:
+
+        mask = make_attn_mask(x_lens, self.layers[0].n_heads)
 
         for layer in self.layers:
             x = layer(x, mask=mask)
@@ -196,6 +208,9 @@ def test():
 
     x = torch.zeros([3, 7, 128]).to('cuda')
     context = torch.zeros([3, 20, 128]).to('cuda')
+
+    x_lens = torch.Tensor([3, 4, 7]).to('cuda').to(torch.int32)
+    context_lens = torch.Tensor([11, 12, 20]).to('cuda').to(torch.int32)
 
     encoder = TransformerEncoder(
         TransformerEncoderLayer(
@@ -221,7 +236,7 @@ def test():
         nn.LayerNorm(128)
     ).to('cuda')
 
-    context = encoder(context,)
+    context = encoder(context, x_lens=context_lens)
     print(context.shape)
-    out = decoder(x, context,)
+    out = decoder(x, context, x_lens=x_lens)
     print(out.shape)

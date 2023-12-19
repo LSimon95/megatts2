@@ -1,5 +1,4 @@
-from pypinyin import pinyin, Style, load_phrases_dict
-from pypinyin.style._utils import get_finals, get_initials
+from pypinyin import pinyin, Style
 from phonemizer.separator import Separator
 
 from tn.chinese.normalizer import Normalizer
@@ -129,6 +128,7 @@ if __name__ == '__main__':
     txt = 'Hellow你好啊,我是Simon,你叫什么名字？What is your name?'
     phones = tt.phonemize(txt)
     print(phones)
+    print(tt.to_list(txt))
     # assert phones  == 'hellow_ni3_hao3_wo3_shi4_simon_ni3_jiao4_shen2_me5_ming2_zi4_what_is_your_name'
     # print(tt.tokenize(txt))
     

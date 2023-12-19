@@ -5,6 +5,8 @@ Unoffical implement of Megatts2
 1. conda create -n aligner && conda activate aligner
 2. conda install -c conda-forge montreal-forced-aligner=2.2.17
 
+## Install xformers
+1. conda install xformers -c xformers
 
 ## Prepare dataset
 1. Prepare wav and txt files to ./data/wav 
