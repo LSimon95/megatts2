@@ -24,7 +24,7 @@ from utils.textgrid import read_textgrid
 
 import argparse
 
-from lhotse import validate_recordings_and_supervisions, CutSet, NumpyHdf5Writer
+from lhotse import validate_recordings_and_supervisions, CutSet, NumpyHdf5Writer, load_manifest_lazy
 from lhotse.audio import Recording, RecordingSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.recipes.utils import read_manifests_if_cached
@@ -33,7 +33,9 @@ from functools import partial
 
 from modules.tokenizer import MelSpecExtractor, AudioFeatExtraConfig
 
-DURATION_MAX = 100  # 10ms ~ 1s
+import soundfile as sf
+
+TOKEN_MAX = 100  # 15ms ~ 1.5s
 
 
 def make_lab(tt, wav):
@@ -63,6 +65,10 @@ class DatasetMaker:
                             default=4, help='Number of workers')
         parser.add_argument('--test_set_ratio', type=float,
                             default=0.01, help='Test set ratio')
+        parser.add_argument('--duration_token_ms', type=float,
+                            default=15, help='Unit of duration token')
+        parser.add_argument('--trim_wav', type=bool,
+                            default=False, help='Trim wav by textgrid')
 
         self.args = parser.parse_args()
 
@@ -88,19 +94,24 @@ class DatasetMaker:
             id = tg.split('/')[-1].split('.')[0]
             speaker = tg.split('/')[-2]
 
-            intervals = [i for i in read_textgrid(tg) if i[3] == 'phones']
+            intervals = [i for i in read_textgrid(tg) if (i[3] == 'phones' and i[2] != '')]
+
+            if self.args.trim_wav:
+                start=intervals[0][0]
+                duration=intervals[-1][1]
+                y = sf.read(f'{self.args.wavtxt_path}/{speaker}/{id}.wav')[0]
+                y = y[int(start*16000):int(duration*16000)]
+                sf.write(f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, 16000)
 
             duration_tokens = []
             phone_tokens = []
             for interval in intervals:
-                if interval[2] == '':
-                    continue
 
-                duration = (interval[1] - interval[0]) * 100
-                if duration > DURATION_MAX:
-                    duration = DURATION_MAX
+                token = (interval[1] - interval[0]) * 1000 / self.args.duration_token_ms
+                if token > TOKEN_MAX:
+                    token = TOKEN_MAX
 
-                duration_tokens.append(int(duration))
+                duration_tokens.append(int(token))
                 phone_tokens.append(interval[2])
 
             recording = Recording.from_file(
@@ -110,7 +121,7 @@ class DatasetMaker:
             segment = SupervisionSegment(
                 id=id,
                 recording_id=id,
-                start=0.0,
+                start=0,
                 duration=recording.duration,
                 channel=0,
                 language="CN",
@@ -160,7 +171,7 @@ class DatasetMaker:
             )
 
             cut_set.to_file(
-                f"{self.args.ds_path}/cuts_{partition}.json.gz")
+                f"{self.args.ds_path}/cuts_{partition}.jsonl.gz")
 
 if __name__ == '__main__':
     dm = DatasetMaker()
@@ -170,6 +181,12 @@ if __name__ == '__main__':
         dm.make_labs()
     elif dm.args.stage == 1:
         dm.make_ds()
-        # with Pool(args.num_workers) as p:
-        #     for _ in tqdm(p.imap(make_ds, tgs), total=len(tgs)):
-        #         pass
+
+        # Test
+        cs = load_manifest_lazy(
+            f'{dm.args.ds_path}/cuts_train.jsonl.gz')
+
+        
+        
+        print(cs.describe())
+

@@ -2,8 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from typing import List
+
 from modules.embedding import TokenEmbedding, SinePositionalEmbedding
-from modules.conv_net import ConvNet
+from modules.convnet import ConvNet
 from modules.transformer import (TransformerEncoder, 
                                  TransformerEncoderLayer,
                                  TransformerDecoder,
@@ -58,8 +60,8 @@ class MRTE(nn.Module):
             nhead: int = 2,
             n_layers: int = 8,
             ge_kernel_size: int = 31,
-            ge_layers: int = 5,
-            ge_activation: str = 'GELU',
+            ge_hidden_sizes: List = [128, 256, 256, 512, 512],
+            ge_activation: str = 'ReLU',
             ge_out_channels: int = 512,
             duration_tokne_ms: int = 15,
             text_vocab_size: int = 320,
@@ -109,12 +111,11 @@ class MRTE(nn.Module):
         self.compress_features = nn.Linear(attn_dim + ge_out_channels, ge_out_channels)
 
         self.ge = ConvNet(
-            in_channels=mel_bins,
-            out_channels=ge_out_channels,
-            kernel_size=ge_kernel_size,
-            layers=ge_layers,
-            activation=ge_activation,
-            type='encoder'
+            hidden_sizes = ge_hidden_sizes,
+            ge_kernel_size = ge_kernel_size,
+            stack_size  = 3,
+            activation = ge_activation,
+            avg_pooling = True
         )
 
         self.length_regulator = LengthRegulator(mel_frames, sample_rate, duration_tokne_ms)
@@ -138,7 +139,7 @@ class MRTE(nn.Module):
         phone = self.mrte_decoder(text, mel_context, text_lens)
 
         ge = self.ge(mel.transpose(1, 2)).transpose(1, 2)
-        ge = torch.mean(ge, dim=1).unsqueeze(1).repeat(1, phone.shape[1], 1)
+        ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
 
         out = self.compress_features(torch.cat([ge, phone], dim=-1))
         out = self.length_regulator(out, duration_tokens)

@@ -1,7 +1,6 @@
 import torch
 
-from modules.transformer import test
-from modules.mrte import test
+from modules.convnet import test
 
 
 if __name__ == '__main__':
