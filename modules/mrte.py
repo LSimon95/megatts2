@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from einops import rearrange
+
 from typing import List
 
 from modules.embedding import TokenEmbedding, SinePositionalEmbedding
@@ -10,6 +12,12 @@ from modules.transformer import (TransformerEncoder,
                                  TransformerEncoderLayer,
                                  TransformerDecoder,
                                  TransformerDecoderLayer)
+
+from modules.tokenizer import (
+    HIFIGAN_SR,
+    HIFIGAN_MEL_CHANNELS,
+    HIFIGAN_HOP_LENGTH
+)
 
 def create_alignment(base_mat, duration_tokens):
     N, L = duration_tokens.shape
@@ -53,20 +61,20 @@ class LengthRegulator(nn.Module):
 class MRTE(nn.Module):
     def __init__(
             self, 
-            mel_bins: int = 128,
-            mel_frames: int = 240,
+            mel_bins: int = HIFIGAN_MEL_CHANNELS,
+            mel_frames: int = HIFIGAN_HOP_LENGTH,
             attn_dim: int = 512,
             ff_dim: int = 1024,
             nhead: int = 2,
             n_layers: int = 8,
             ge_kernel_size: int = 31,
-            ge_hidden_sizes: List = [128, 256, 256, 512, 512],
+            ge_hidden_sizes: List = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
             ge_activation: str = 'ReLU',
             ge_out_channels: int = 512,
-            duration_tokne_ms: int = 15,
+            duration_tokne_ms: int = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
             text_vocab_size: int = 320,
             dropout: float = 0.1,
-            sample_rate: int = 16000,
+            sample_rate: int = HIFIGAN_SR,
     ):
         super(MRTE, self).__init__()
         
@@ -112,7 +120,7 @@ class MRTE(nn.Module):
 
         self.ge = ConvNet(
             hidden_sizes = ge_hidden_sizes,
-            ge_kernel_size = ge_kernel_size,
+            kernel_size = ge_kernel_size,
             stack_size  = 3,
             activation = ge_activation,
             avg_pooling = True
@@ -138,7 +146,8 @@ class MRTE(nn.Module):
         mel_context = self.mel_encoder(mel_pos, mel_lens)
         phone = self.mrte_decoder(text, mel_context, text_lens)
 
-        ge = self.ge(mel.transpose(1, 2)).transpose(1, 2)
+        mel = rearrange(mel, "B T D -> B D T")
+        ge = self.ge(mel)
         ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
 
         out = self.compress_features(torch.cat([ge, phone], dim=-1))
@@ -156,20 +165,20 @@ def test():
     assert out.shape == (2, 11, 128)
 
     mrte = MRTE(
-        mel_bins=128,
-        mel_frames=240,
-        attn_dim=512,
-        ff_dim=1024,
-        nhead=2,
-        n_layers=8,
-        ge_kernel_size=31,
-        ge_layers=5,
-        ge_activation='GELU',
-        ge_out_channels=512,
-        duration_tokne_ms=15,
-        text_vocab_size=320,
-        dropout=0.1,
-        sample_rate=16000,
+        mel_bins = HIFIGAN_MEL_CHANNELS,
+        mel_frames = HIFIGAN_HOP_LENGTH,
+        attn_dim = 512,
+        ff_dim = 1024,
+        nhead = 2,
+        n_layers = 8,
+        ge_kernel_size = 31,
+        ge_hidden_sizes = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
+        ge_activation = 'ReLU',
+        ge_out_channels = 512,
+        duration_tokne_ms = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+        text_vocab_size = 320,
+        dropout = 0.1,
+        sample_rate = HIFIGAN_SR,
     )
     mrte = mrte.to('cuda')
 
@@ -177,7 +186,7 @@ def test():
 
     t = torch.randint(0, 320, (2, 10)).to(dtype=torch.int64).to('cuda')
     tl = torch.tensor([6, 10]).to(dtype=torch.int64).to('cuda')
-    m = torch.randn(2, 2400, 128).to('cuda')
+    m = torch.randn(2, 2400, HIFIGAN_MEL_CHANNELS).to('cuda')
     ml = torch.tensor([1200, 2400]).to(dtype=torch.int64).to('cuda')
 
     out = mrte(duration_tokens, t, tl, m, ml)

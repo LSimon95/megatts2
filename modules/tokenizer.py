@@ -17,6 +17,13 @@ from typing import Union
 import torchaudio as ta
 import re
 
+HIFIGAN_SR = 22050
+HIFIGAN_HOP_LENGTH = 256
+HIFIGAN_WIN_LENGTH = 1024
+HIFIGAN_MEL_CHANNELS = 80
+HIFIGAN_NFFT = 1024
+HIFIGAN_MAX_FREQ = 8000
+
 def get_pinyin2ity():
     pinyin2lty = {}
     with open('utils/mandarin_pinyin_to_mfa_lty.dict', 'r') as f:
@@ -84,8 +91,8 @@ class TextTokenizer:
 
 @dataclass
 class AudioFeatExtraConfig:
-    frame_shift: Seconds = 320.0 / 16000
-    feature_dim: int = 128
+    frame_shift: Seconds = HIFIGAN_HOP_LENGTH / HIFIGAN_SR
+    feature_dim: int = HIFIGAN_MEL_CHANNELS
 
 class MelSpecExtractor(FeatureExtractor):
     name = "mel_spec"
@@ -99,19 +106,19 @@ class MelSpecExtractor(FeatureExtractor):
         return self.config.feature_dim
 
     def extract(self, samples: Union[np.ndarray, torch.Tensor], sampling_rate: int) -> np.ndarray:
+        assert sampling_rate == HIFIGAN_SR
         if not isinstance(samples, torch.Tensor):
             samples = torch.from_numpy(samples)
         torch.set_num_threads(1)
-
+        # Hifigan
         mel_spec = ta.transforms.MelSpectrogram(
             sample_rate=sampling_rate,
-            n_fft=1024,
-            win_length=480,
-            hop_length=240,
-            n_mels=128,
+            n_fft=HIFIGAN_NFFT,
+            win_length=HIFIGAN_WIN_LENGTH,
+            hop_length=HIFIGAN_HOP_LENGTH,
+            n_mels=self.config.feature_dim,
             f_min=0,
-            f_max=None,
-            power=1.0,
+            f_max=HIFIGAN_MAX_FREQ,
         )(samples)
         duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
         num_frames = compute_num_frames(
