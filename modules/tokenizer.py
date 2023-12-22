@@ -1,8 +1,6 @@
 from pypinyin import pinyin, Style
 from phonemizer.separator import Separator
 
-from tn.chinese.normalizer import Normalizer
-
 import re
 from dataclasses import dataclass
 
@@ -24,7 +22,8 @@ HIFIGAN_MEL_CHANNELS = 80
 HIFIGAN_NFFT = 1024
 HIFIGAN_MAX_FREQ = 8000
 
-def get_pinyin2ity():
+
+def get_pinyin2lty():
     pinyin2lty = {}
     with open('utils/mandarin_pinyin_to_mfa_lty.dict', 'r') as f:
         lines = f.readlines()
@@ -32,21 +31,20 @@ def get_pinyin2ity():
         for line in lines:
             ele = re.split(r'\t', line)
 
-            ity_phones = re.split(r'[ ]+', ele[-1])
+            ity_phones = re.split(r'[ ]+', ele[-1].strip())
             pinyin2lty[ele[0]] = ity_phones
 
     return pinyin2lty
 
+
 class TextTokenizer:
     def __init__(self) -> None:
 
-        self.normalizer = Normalizer()
         self.separator = Separator(word="_", syllable="-", phone="|")
-        self.pinyin2ity = get_pinyin2ity()
+        self.pinyin2lty = get_pinyin2lty()
 
     def phonemize(self, text: str) -> str:
-        text = self.normalizer.normalize(text)
-        text = re.sub(r'<oov>.*</oov>', ' ', text)  # remove oov
+        text = re.sub(r'[^\w\s]+', ' ', text) # remove punctuation
         text = re.sub(r'[ ]+', ' ', text)  # remove extra spaces
         text = text.lower()
 
@@ -71,28 +69,41 @@ class TextTokenizer:
                         if not py[0][-1].isalnum():
                             raise ValueError
                         phones.append(py[0])
-                    phonemizeds.append(' '.join(phones))
+                    phonemizeds.append(self.separator.phone.join(phones))
 
         phonemizeds = f'{self.separator.word}'.join(
             [phones for phones in phonemizeds])
         return phonemizeds
 
-    def to_list(self, text):
+    def tokenize(self, text):
         phones = []
         for word in re.split('([_-])', self.phonemize(text.strip())):
             if len(word):
                 for phone in re.split('\|', word):
                     if len(phone):
-                        if re.match(r"[a-z']+", phone):
-                            phones.append(phone)
-                        else:
-                            phones += self.pinyin2ity[phone]
+                        phones.append(phone)
+
         return phones
+
+    def tokenize_lty(self, pinyin_tokens):
+        lty_tokens_list = []
+
+        for token in pinyin_tokens:
+            if token in self.pinyin2lty.keys():
+                lty_tokens = self.pinyin2lty[token]
+                phones = self.separator.syllable.join(lty_tokens)
+                lty_tokens = re.split(rf'({self.separator.syllable})', phones)
+                lty_tokens_list += lty_tokens
+            else:
+                lty_tokens_list.append(token)
+        return lty_tokens_list
+
 
 @dataclass
 class AudioFeatExtraConfig:
     frame_shift: Seconds = HIFIGAN_HOP_LENGTH / HIFIGAN_SR
     feature_dim: int = HIFIGAN_MEL_CHANNELS
+
 
 class MelSpecExtractor(FeatureExtractor):
     name = "mel_spec"
@@ -135,7 +146,7 @@ if __name__ == '__main__':
     txt = 'Hellow你好啊,我是Simon,你叫什么名字？What is your name?'
     phones = tt.phonemize(txt)
     print(phones)
-    print(tt.to_list(txt))
+    print(tt.tokenize(txt))
+    print(tt.tokenize_lty(tt.tokenize(txt)))
     # assert phones  == 'hellow_ni3_hao3_wo3_shi4_simon_ni3_jiao4_shen2_me5_ming2_zi4_what_is_your_name'
     # print(tt.tokenize(txt))
-    

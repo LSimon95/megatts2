@@ -28,9 +28,8 @@ from math import isclose
 import numpy as np
 
 class TokensCollector():
-    def __init__(self, symbols_table: str, max_tokens: int) -> None:
+    def __init__(self, symbols_table: str) -> None:
         unique_tokens = SymbolTable.from_file(symbols_table).symbols
-        assert len(unique_tokens) < max_tokens
         self.token2idx = {token: idx for idx, token in enumerate(unique_tokens)}
 
     def __call__(self, cuts: CutSet) -> (List, torch.Tensor):
@@ -68,83 +67,59 @@ class TokensCollector():
 class TTSDataset(torch.utils.data.Dataset):
     def __init__(
             self,
-            num_audio_tokens: int,
+            cuts: CutSet,
             symbols_table: str,
-            train_stage: str = 'ar'
+            n_same_spk_samples: int = 10
     ):
         super().__init__()
 
-        self.text_tokens_collector = TextTokensCollector(
-            symbols_table, num_audio_tokens)
-
-        self.bos = self.text_tokens_collector.bos
-        self.eos = num_audio_tokens
-        self.train_stage = train_stage
+        self.tokens_collector = TokensCollector(symbols_table)
+        self.whole_cuts = cuts
+        self.n_same_spk_samples = n_same_spk_samples
 
     def __getitem__(self, cuts: CutSet) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        text_tokens, text_token_lens = self.text_tokens_collector(
-            cuts, self.train_stage == 'ar')
+        phone_tokens, duration_tokens, tokens_lens = self.tokens_collector(cuts)
+        mel_targets, mel_target_lens = collate_features(
+            cuts,
+            executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
 
-        audio_features = []
-        audio_features_lens = []
-        for cut in cuts:
-            if cut.has_features:
-                
-                with h5py.File(cut.features.storage_path, "r") as f:
-                    left_offset_frames, right_offset_frames = 0, 0
-                    start = cut.start
-                    duration = cut.duration
+        #
+        # mel_timbres_list = []
+        # mel_timbre_lens_list = []
+        # for cut in cuts:
+        #     same_spk_cuts = self.whole_cuts.filter(lambda c: c.supervisions[0].speaker == cut.supervisions[0].speaker)
+        #     same_spk_cuts = same_spk_cuts.to_eager()
+        #     max_sample = len(same_spk_cuts)
+        #     n_sample = random.randint(1, max_sample)
+        #     same_spk_cuts = same_spk_cuts.sample(n_cuts=n_sample)
 
-                    if not isclose(start, cut.features.start):
-                        left_offset_frames = compute_num_frames(
-                            start - cut.features.start,
-                            frame_shift=cut.features.frame_shift,
-                            sampling_rate=cut.features.sampling_rate,
-                        )
+        #     mel_timbres_same_spk, mel_timbre_lens_same_spk = collate_features(
+        #         same_spk_cuts,
+        #         executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
 
-                    right_offset_frames = left_offset_frames + compute_num_frames(
-                        duration, frame_shift=cut.features.frame_shift, sampling_rate=cut.features.sampling_rate
-                    )
+        #     mel_timbre = mel_timbres_same_spk[0, :mel_timbre_lens_same_spk[0]]
+        #     for i in range(1, mel_timbres_same_spk.shape[0]):
+        #         mel_timbre = torch.cat([mel_timbre, mel_timbres_same_spk[i, :mel_timbre_lens_same_spk[i]]], dim=0)
+        #     mel_timbres_list.append(mel_timbre)
+        #     mel_timbre_lens_list.append(mel_timbre.shape[0])
 
-                    audio_feature = f[cut.features.storage_key][left_offset_frames:right_offset_frames].copy()
-                audio_features.append(audio_feature)
-                audio_features_lens.append(len(audio_feature))
+        # max_len = max(mel_timbre_lens_list)
+        # mel_timbres_list_padded = []
+        # for i in range(len(mel_timbres_list)):
+        #     mel_timbres_list_padded.append(F.pad(
+        #         mel_timbres_list[i], (0, max_len - mel_timbre_lens_list[i]), mode='constant', value=0))
 
-        audio_features_lens = torch.Tensor(audio_features_lens).to(dtype=torch.int32)
-
-        # audio_features, audio_features_lens = collate_features(
-        #     cuts,
-        #     executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
-
-        # # print('audio f(before pad) ', audio_features[0, :audio_features_lens[0], 0], audio_features_lens[0])
-        # audio_features = audio_features.transpose(1, 2)
-
-        audio_features_list = []
-        if self.train_stage == 'ar':
-            max_audio_features_len = audio_features_lens.max().item() + 1 
-            for i in range(len(audio_features)):
-                audio_feature = torch.from_numpy(audio_features[i].astype(np.int64))[:, 0]
-                audio_feature = F.pad(
-                    audio_feature, (0, max_audio_features_len - audio_features_lens[i]), mode='constant', value=self.eos)
-                audio_features_list.append(audio_feature)
-            audio_features = torch.stack(audio_features_list)
-            audio_features_lens += 1
-        else:
-            min_audio_features_len = audio_features_lens.min().item()
-            for i in range(len(audio_features)):
-                audio_feature = torch.from_numpy(audio_features[i].astype(np.int64)).transpose(0, 1)
-                audio_features_list.append(audio_feature)
-            audio_features = torch.stack(audio_features_list)
-            audio_features_lens = torch.full_like(
-                audio_features_lens, min_audio_features_len)
-
-        # print('audio f(after pad) ', audio_features[0, :audio_features_lens[0]], audio_features_lens[0])
+        # mel_timbres = torch.stack(mel_timbres_list_padded).type(torch.float32)
+        # mel_timbre_lens = torch.Tensor(mel_timbre_lens_list).to(dtype=torch.int32)
 
         batch = {
-            "text_tokens":  text_tokens.to(torch.int64),
-            "text_token_lens": text_token_lens,
-            "audio_features": audio_features,
-            "audio_feature_lens": audio_features_lens
+            "phone_tokens":  phone_tokens,
+            "duration_tokens": duration_tokens,
+            "tokens_lens": tokens_lens,
+            "mel_targets": mel_targets,
+            "mel_target_lens": mel_target_lens,
+            "mel_timbres": None,
+            "mel_timbre_lens": None
         }
 
         return batch
@@ -155,13 +130,11 @@ class TTSDataModule(pl.LightningDataModule):
             self,
             ds_path: str = 'data',
             max_duration_batch: float = 80,
-            min_duration: float = 0,
-            max_duration: float = 21,
+            min_duration: float = 1.5,
+            max_duration: float = 20,
             num_buckets: int = 2,
             symbols_table: str = 'data/unique_text_tokens.k2symbols',
-            num_audio_tokens: int = 1024,
             num_workers: int = 4,
-            train_stage: str = 'ar',
             **kwargs
     ) -> None:
         super().__init__()
@@ -169,25 +142,21 @@ class TTSDataModule(pl.LightningDataModule):
 
     def setup(self, stage: str = None) -> None:
 
-        def remove_short_and_long_utt(c):
-            # Keep only utterances with duration between 0.6 second and 20 seconds
+        def filter_duration(c):
             if c.duration < self.hparams.min_duration or c.duration > self.hparams.max_duration:
-                # logging.warning(
-                #     f"Exclude cut with ID {c.id} from training. Duration: {c.duration}"
-                # )
                 return False
             return True
 
         seed = random.randint(0, 100000)
 
-        cs_files = glob.glob(f'{self.hparams.ds_path}/*_cuts_train.jsonl.gz')
+        cs_files = glob.glob(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
         print("Training Cuts: ", len(cs_files))
         random.shuffle(cs_files)
         cs_train = load_manifest_lazy(cs_files[0])
         for cs_file in cs_files[1:]:
             cs_train += load_manifest_lazy(cs_file)
 
-        cs_train = cs_train.filter(remove_short_and_long_utt)
+        cs_train = cs_train.filter(filter_duration)
 
         self.train_dl = DataLoader(
             TTSDataset(
@@ -209,14 +178,14 @@ class TTSDataModule(pl.LightningDataModule):
             ),
         )
 
-        cs_files = glob.glob(f'{self.hparams.ds_path}/*_cuts_valid.jsonl.gz')
+        cs_files = glob.glob(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
         print("Validation Cuts: ", len(cs_files))
         random.shuffle(cs_files)
         cs_valid = load_manifest_lazy(cs_files[0])
         for cs_file in cs_files[1:]:
             cs_valid += load_manifest_lazy(cs_file)
 
-        cs_valid = cs_valid.filter(remove_short_and_long_utt)
+        cs_valid = cs_valid.filter(filter_duration)
 
         self.valid_dl = DataLoader(
             TTSDataset(
@@ -250,17 +219,15 @@ class TTSDataModule(pl.LightningDataModule):
 
 def test():
 
-    cs = load_manifest_lazy(
-        "/workspace/workpath/manifests/b_down_hq_0_cuts_train.jsonl.gz")
+    cs = load_manifest_lazy("data/ds/cuts_train.jsonl.gz")
 
     dataloader = torch.utils.data.DataLoader(
-        TTSDataset(
-            1024, "/workspace/workpath/manifests/unique_text_tokens.k2symbols"),
+        TTSDataset(cs, "data/ds/unique_text_tokens.k2symbols", 10),
         num_workers=1,
         batch_size=None,
         sampler=DynamicBucketingSampler(
             cs,
-            max_duration=80,
+            max_duration=30,
             shuffle=True,
             num_buckets=32,
             drop_last=False,
@@ -268,7 +235,11 @@ def test():
         )
     )
     for batch in dataloader:
-        print(batch['text_tokens'][0])
-        print(batch['text_token_len'])
-        print(batch['audio_features'][0])
-        print(batch['audio_features_len'])
+        print(batch["phone_tokens"].shape)
+        print(batch["duration_tokens"].shape)
+        print(batch["tokens_lens"].shape)
+        print(batch["mel_targets"].shape)
+        print(batch["mel_target_lens"].shape)
+        print(batch["mel_timbres"].shape)
+        print(batch["mel_timbre_lens"].shape)
+        break

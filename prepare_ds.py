@@ -37,6 +37,7 @@ from modules.tokenizer import (
     MelSpecExtractor, 
     AudioFeatExtraConfig
 )
+from utils.symbol_table import SymbolTable
 
 import soundfile as sf
 import librosa
@@ -70,7 +71,7 @@ class DatasetMaker:
         parser.add_argument('--num_workers', type=int,
                             default=4, help='Number of workers')
         parser.add_argument('--test_set_ratio', type=float,
-                            default=0.01, help='Test set ratio')
+                            default=0.03, help='Test set ratio')
         parser.add_argument('--duration_token_ms', type=float,
                             default=(HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000), help='Unit of duration token')
         parser.add_argument('--resample', type=bool,
@@ -105,17 +106,15 @@ class DatasetMaker:
             intervals = [i for i in read_textgrid(
                 tg) if (i[3] == 'phones' and i[2] != '')]
 
-            if self.args.resample:
+            if self.args.resample or self.args.trim_wav:
                 y, sr = librosa.load(f'{self.args.wavtxt_path}/{speaker}/{id}.wav')
-                y = librosa.resample(y, orig_sr=sr, target_sr=HIFIGAN_SR)
-                sf.write(
-                    f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, HIFIGAN_SR)
-
-            if self.args.trim_wav:
-                start = intervals[0][0]
-                duration = intervals[-1][1]
-                y = sf.read(f'{self.args.wavtxt_path}/{speaker}/{id}.wav')[0]
-                y = y[int(start*HIFIGAN_SR):int(duration*HIFIGAN_SR)]
+                if self.args.trim_wav:
+                    start = intervals[0][0]
+                    duration = intervals[-1][1]
+                    y = y[int(start*sr):int(duration*sr)]
+                if self.args.resample:
+                    y = librosa.resample(y, orig_sr=sr, target_sr=HIFIGAN_SR)
+                
                 sf.write(
                     f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, HIFIGAN_SR)
 
@@ -205,7 +204,22 @@ if __name__ == '__main__':
         dm.make_ds()
 
         # Test
-        cs = load_manifest_lazy(
+        cs_train = load_manifest_lazy(
             f'{dm.args.ds_path}/cuts_train.jsonl.gz')
+        cs_valid = load_manifest_lazy(
+            f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
+        cs = cs_train + cs_valid
+
+        unique_symbols = set()
+
+        for c in tqdm(cs):
+            unique_symbols.update(c.supervisions[0].custom["phone_tokens"])
+
+        unique_phonemes = SymbolTable()
+        for s in sorted(list(unique_symbols)):
+            unique_phonemes.add(s)
+
+        unique_phonemes_file = f"unique_text_tokens.k2symbols"
+        unique_phonemes.to_file(f'{dm.args.ds_path}/{unique_phonemes_file}')
 
         print(cs.describe())
