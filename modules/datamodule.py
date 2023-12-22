@@ -6,7 +6,7 @@ import random
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from lhotse import CutSet, load_manifest_lazy
+from lhotse import CutSet, load_manifest
 from lhotse.dataset.collation import collate_features
 from lhotse.dataset import DynamicBucketingSampler
 from lhotse.dataset.input_strategies import (
@@ -83,34 +83,33 @@ class TTSDataset(torch.utils.data.Dataset):
             cuts,
             executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
 
-        #
-        # mel_timbres_list = []
-        # mel_timbre_lens_list = []
-        # for cut in cuts:
-        #     same_spk_cuts = self.whole_cuts.filter(lambda c: c.supervisions[0].speaker == cut.supervisions[0].speaker)
-        #     same_spk_cuts = same_spk_cuts.to_eager()
-        #     max_sample = len(same_spk_cuts)
-        #     n_sample = random.randint(1, max_sample)
-        #     same_spk_cuts = same_spk_cuts.sample(n_cuts=n_sample)
+        
+        mel_timbres_list = []
+        mel_timbre_lens_list = []
+        n_sample = random.randint(2, self.n_same_spk_samples)
+        for cut in cuts:
+            same_spk_cuts = self.whole_cuts.filter(lambda c: c.supervisions[0].speaker == cut.supervisions[0].speaker)
+            same_spk_cuts = same_spk_cuts.sample(n_cuts=min(n_sample, len(same_spk_cuts)))
 
-        #     mel_timbres_same_spk, mel_timbre_lens_same_spk = collate_features(
-        #         same_spk_cuts,
-        #         executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
+            mel_timbres_same_spk, mel_timbre_lens_same_spk = collate_features(
+                same_spk_cuts,
+                executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
 
-        #     mel_timbre = mel_timbres_same_spk[0, :mel_timbre_lens_same_spk[0]]
-        #     for i in range(1, mel_timbres_same_spk.shape[0]):
-        #         mel_timbre = torch.cat([mel_timbre, mel_timbres_same_spk[i, :mel_timbre_lens_same_spk[i]]], dim=0)
-        #     mel_timbres_list.append(mel_timbre)
-        #     mel_timbre_lens_list.append(mel_timbre.shape[0])
+            mel_timbre = mel_timbres_same_spk[0, :mel_timbre_lens_same_spk[0]]
+            for i in range(1, mel_timbres_same_spk.shape[0]):
+                mel_timbre = torch.cat([mel_timbre, mel_timbres_same_spk[i, :mel_timbre_lens_same_spk[i]]], dim=0)
+            mel_timbres_list.append(mel_timbre)
+            mel_timbre_lens_list.append(mel_timbre.shape[0])
+            
 
-        # max_len = max(mel_timbre_lens_list)
-        # mel_timbres_list_padded = []
-        # for i in range(len(mel_timbres_list)):
-        #     mel_timbres_list_padded.append(F.pad(
-        #         mel_timbres_list[i], (0, max_len - mel_timbre_lens_list[i]), mode='constant', value=0))
+        max_len = max(mel_timbre_lens_list)
+        mel_timbres_list_padded = []
+        for i in range(len(mel_timbres_list)):
+            mel_timbres_list_padded.append(F.pad(
+                mel_timbres_list[i], (0, 0, 0, max_len - mel_timbre_lens_list[i]), mode='constant', value=0))
 
-        # mel_timbres = torch.stack(mel_timbres_list_padded).type(torch.float32)
-        # mel_timbre_lens = torch.Tensor(mel_timbre_lens_list).to(dtype=torch.int32)
+        mel_timbres = torch.stack(mel_timbres_list_padded).type(torch.float32)
+        mel_timbre_lens = torch.Tensor(mel_timbre_lens_list).to(dtype=torch.int32)
 
         batch = {
             "phone_tokens":  phone_tokens,
@@ -118,8 +117,8 @@ class TTSDataset(torch.utils.data.Dataset):
             "tokens_lens": tokens_lens,
             "mel_targets": mel_targets,
             "mel_target_lens": mel_target_lens,
-            "mel_timbres": None,
-            "mel_timbre_lens": None
+            "mel_timbres": mel_timbres,
+            "mel_timbre_lens": mel_timbre_lens
         }
 
         return batch
@@ -148,14 +147,7 @@ class TTSDataModule(pl.LightningDataModule):
             return True
 
         seed = random.randint(0, 100000)
-
-        cs_files = glob.glob(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
-        print("Training Cuts: ", len(cs_files))
-        random.shuffle(cs_files)
-        cs_train = load_manifest_lazy(cs_files[0])
-        for cs_file in cs_files[1:]:
-            cs_train += load_manifest_lazy(cs_file)
-
+        cs_train = load_manifest("data/ds/cuts_train.jsonl.gz")
         cs_train = cs_train.filter(filter_duration)
 
         self.train_dl = DataLoader(
@@ -178,13 +170,7 @@ class TTSDataModule(pl.LightningDataModule):
             ),
         )
 
-        cs_files = glob.glob(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
-        print("Validation Cuts: ", len(cs_files))
-        random.shuffle(cs_files)
-        cs_valid = load_manifest_lazy(cs_files[0])
-        for cs_file in cs_files[1:]:
-            cs_valid += load_manifest_lazy(cs_file)
-
+        cs_valid = load_manifest(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
         cs_valid = cs_valid.filter(filter_duration)
 
         self.valid_dl = DataLoader(
@@ -219,7 +205,7 @@ class TTSDataModule(pl.LightningDataModule):
 
 def test():
 
-    cs = load_manifest_lazy("data/ds/cuts_train.jsonl.gz")
+    cs = load_manifest("data/ds/cuts_train.jsonl.gz")
 
     dataloader = torch.utils.data.DataLoader(
         TTSDataset(cs, "data/ds/unique_text_tokens.k2symbols", 10),
@@ -242,4 +228,3 @@ def test():
         print(batch["mel_target_lens"].shape)
         print(batch["mel_timbres"].shape)
         print(batch["mel_timbre_lens"].shape)
-        break
