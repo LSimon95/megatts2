@@ -151,11 +151,7 @@ class TTSDataModule(pl.LightningDataModule):
         cs_train = cs_train.filter(filter_duration)
 
         self.train_dl = DataLoader(
-            TTSDataset(
-                num_audio_tokens=self.hparams.num_audio_tokens,
-                symbols_table=self.hparams.symbols_table,
-                train_stage=self.hparams.train_stage,
-            ),
+            TTSDataset(cs_train, "data/ds/unique_text_tokens.k2symbols", 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(
@@ -164,8 +160,6 @@ class TTSDataModule(pl.LightningDataModule):
                 shuffle=True,
                 num_buckets=self.hparams.num_buckets,
                 drop_last=True,
-                # buffer_size=100000,
-                # shuffle_buffer_size=200000,
                 seed=seed
             ),
         )
@@ -174,11 +168,7 @@ class TTSDataModule(pl.LightningDataModule):
         cs_valid = cs_valid.filter(filter_duration)
 
         self.valid_dl = DataLoader(
-            TTSDataset(
-                num_audio_tokens=self.hparams.num_audio_tokens,
-                symbols_table=self.hparams.symbols_table,
-                train_stage=self.hparams.train_stage,
-            ),
+            TTSDataset(cs_valid, "data/ds/unique_text_tokens.k2symbols", 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(
@@ -187,8 +177,6 @@ class TTSDataModule(pl.LightningDataModule):
                 shuffle=True,
                 num_buckets=self.hparams.num_buckets,
                 drop_last=False,
-                # buffer_size=100000,
-                # shuffle_buffer_size=200000,
                 seed=seed
             ),
         )

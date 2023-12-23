@@ -33,4 +33,3 @@ class MegaGAN(nn.Module):
         x = torch.cat([x, zq], dim=-1)
         x = self.decoder(x)
         return x, commit_loss
-        
