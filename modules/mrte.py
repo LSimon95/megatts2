@@ -71,7 +71,7 @@ class MRTE(nn.Module):
             ge_hidden_sizes: List = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
             ge_activation: str = 'ReLU',
             ge_out_channels: int = 512,
-            duration_tokne_ms: int = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+            duration_tokne_ms: float = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
             text_vocab_size: int = 320,
             dropout: float = 0.1,
             sample_rate: int = HIFIGAN_SR,

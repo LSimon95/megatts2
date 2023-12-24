@@ -1,18 +1,19 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from modules.mrte import MRTE
 from modules.vqpe import VQProsodyEncoder
 from modules.convnet import ConvNet
 
-class MegaGAN(nn.Module):
+class MegaVQ(nn.Module):
     def __init__(
             self,
             mrte: MRTE,
             vqpe: VQProsodyEncoder,
             decoder: ConvNet,
             ):
-        super(MegaGAN, self).__init__()
+        super(MegaVQ, self).__init__()
 
         self.mrte = mrte
         self.vqpe = vqpe
@@ -28,8 +29,8 @@ class MegaGAN(nn.Module):
             mel_vqpe: torch.Tensor, # (B, T, mel_bins)
             ):
         
-        zq, commit_loss = self.vqpe(mel_vqpe)
+        zq, commit_loss, vq_loss = self.vqpe(mel_vqpe)
         x = self.mrte(duration_tokens, text, text_lens, mel_mrte, mel_lens_mrte)
         x = torch.cat([x, zq], dim=-1)
         x = self.decoder(x)
-        return x, commit_loss
+        return x, commit_loss, vq_loss

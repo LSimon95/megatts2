@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from modules.convnet import ConvNet
 from modules.tokenizer import (
@@ -41,10 +42,11 @@ class VQProsodyEncoder(nn.Module):
             ):
         
         mel = rearrange(mel, "B T D -> B D T")
-        z = self.convnet(mel)
-        zq, _, commit_loss = self.vq(z)
+        ze = self.convnet(mel)
+        zq, _, commit_loss = self.vq(ze)
+        vq_loss = F.mse_loss(ze.detach(), zq)
         zq = rearrange(zq, "B D T -> B T D")
-        return zq, commit_loss
+        return zq, commit_loss, vq_loss
 
 def test():
     model = VQProsodyEncoder()

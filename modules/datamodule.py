@@ -1,4 +1,4 @@
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 
 import glob
 import random
@@ -132,7 +132,6 @@ class TTSDataModule(pl.LightningDataModule):
             min_duration: float = 1.5,
             max_duration: float = 20,
             num_buckets: int = 2,
-            symbols_table: str = 'data/unique_text_tokens.k2symbols',
             num_workers: int = 4,
             **kwargs
     ) -> None:
@@ -147,11 +146,11 @@ class TTSDataModule(pl.LightningDataModule):
             return True
 
         seed = random.randint(0, 100000)
-        cs_train = load_manifest("data/ds/cuts_train.jsonl.gz")
+        cs_train = load_manifest(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
         cs_train = cs_train.filter(filter_duration)
 
         self.train_dl = DataLoader(
-            TTSDataset(cs_train, "data/ds/unique_text_tokens.k2symbols", 10),
+            TTSDataset(cs_train, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(
@@ -168,7 +167,7 @@ class TTSDataModule(pl.LightningDataModule):
         cs_valid = cs_valid.filter(filter_duration)
 
         self.valid_dl = DataLoader(
-            TTSDataset(cs_valid, "data/ds/unique_text_tokens.k2symbols", 10),
+            TTSDataset(cs_valid, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(
