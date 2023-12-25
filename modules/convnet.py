@@ -15,10 +15,12 @@ class ConvBlock(nn.Module):
             )
         self.norm = nn.LayerNorm(hidden_size)
         self.activation = getattr(nn, activation)()
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, x):
         x = self.conv(x)
         x = self.norm(x.transpose(1, 2)).transpose(1, 2)
+        x = self.dropout(x)
         x = self.activation(x)
         return x
 

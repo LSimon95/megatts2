@@ -63,18 +63,16 @@ class TokensCollector():
 
         return phone_tokens, duration_tokens, lens
 
-
 class TTSDataset(torch.utils.data.Dataset):
     def __init__(
             self,
-            cuts: CutSet,
+            spk2cuts: CutSet,
             symbols_table: str,
             n_same_spk_samples: int = 10
     ):
         super().__init__()
-
         self.tokens_collector = TokensCollector(symbols_table)
-        self.whole_cuts = cuts
+        self.spk2cuts = spk2cuts
         self.n_same_spk_samples = n_same_spk_samples
 
     def __getitem__(self, cuts: CutSet) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -82,13 +80,22 @@ class TTSDataset(torch.utils.data.Dataset):
         mel_targets, mel_target_lens = collate_features(
             cuts,
             executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
-
+        
+        # align duration token and mel_target_lens
+        for i in range(mel_target_lens.shape[0]):
+            sum_duration = torch.sum(duration_tokens[i])
+            assert sum_duration <= mel_target_lens[i]
+            if sum_duration < mel_target_lens[i]:
+                mel_target_lens[i] = sum_duration
+        
+        max_len = max(mel_target_lens)
+        mel_targets = mel_targets[:, :max_len, :]
         
         mel_timbres_list = []
         mel_timbre_lens_list = []
         n_sample = random.randint(2, self.n_same_spk_samples)
         for cut in cuts:
-            same_spk_cuts = self.whole_cuts.filter(lambda c: c.supervisions[0].speaker == cut.supervisions[0].speaker)
+            same_spk_cuts = self.spk2cuts[cut.supervisions[0].speaker]
             same_spk_cuts = same_spk_cuts.sample(n_cuts=min(n_sample, len(same_spk_cuts)))
 
             mel_timbres_same_spk, mel_timbre_lens_same_spk = collate_features(
@@ -123,6 +130,14 @@ class TTSDataset(torch.utils.data.Dataset):
 
         return batch
 
+def make_spk_cutset(cuts: CutSet) -> Dict[str, CutSet]:
+    spk2cuts = {}
+    for cut in cuts:
+        spk = cut.supervisions[0].speaker
+        if spk not in spk2cuts:
+            spk2cuts[spk] = cuts.filter(lambda c: c.supervisions[0].speaker == spk)
+
+    return spk2cuts
 
 class TTSDataModule(pl.LightningDataModule):
     def __init__(
@@ -136,7 +151,7 @@ class TTSDataModule(pl.LightningDataModule):
             **kwargs
     ) -> None:
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['class_path'])
 
     def setup(self, stage: str = None) -> None:
 
@@ -149,8 +164,10 @@ class TTSDataModule(pl.LightningDataModule):
         cs_train = load_manifest(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
         cs_train = cs_train.filter(filter_duration)
 
+        spk2cuts = make_spk_cutset(cs_train)
+
         self.train_dl = DataLoader(
-            TTSDataset(cs_train, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
+            TTSDataset(spk2cuts, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(
@@ -166,8 +183,10 @@ class TTSDataModule(pl.LightningDataModule):
         cs_valid = load_manifest(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
         cs_valid = cs_valid.filter(filter_duration)
 
+        spk2cuts = make_spk_cutset(cs_valid)
+
         self.valid_dl = DataLoader(
-            TTSDataset(cs_valid, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
+            TTSDataset(spk2cuts, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
             sampler=DynamicBucketingSampler(

@@ -99,8 +99,7 @@ class MultiWindowDiscriminator(nn.Module):
         '''
         T_start = 0
         T_end = x_len.max() - win_length
-        if T_end < 0:
-            return None, None, start_frames
+        assert T_end >= 0
         T_end = T_end.item()
         if start_frames is None:
             start_frame = np.random.randint(low=T_start, high=T_end + 1)

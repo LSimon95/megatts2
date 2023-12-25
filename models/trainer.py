@@ -71,9 +71,9 @@ class MegaGANTrainer(pl.LightningModule):
             duration_tokens=batch["duration_tokens"],
             text=batch["phone_tokens"],
             text_lens=batch["tokens_lens"],
-            mel_mrte=batch["mel_targets"],
-            mel_lens_mrte=batch["mel_target_lens"],
-            mel_vqpe=batch["mel_timbres"]
+            mel_mrte=batch["mel_timbres"],
+            mel_lens_mrte=batch["mel_timbre_lens"],
+            mel_vqpe=batch["mel_targets"]
         )
 
         return y_hat, commit_loss, vq_loss
@@ -84,45 +84,45 @@ class MegaGANTrainer(pl.LightningModule):
 
         # Train discriminator
         y = batch["mel_targets"]
-        dscrm_outputs = self.dscrm(y)
-        loss_dscrm_real = torch.mean((dscrm_outputs["y"] - 1) ** 2)
+        # dscrm_outputs = self.dscrm(y)
+        # loss_dscrm_real = torch.mean((dscrm_outputs["y"] - 1) ** 2)
 
-        with torch.no_grad():
-            self.model.eval()
-            y_hat = self(batch)[0]
-        dscrm_outputs = self.dscrm(y_hat.detach())
-        loss_dscrm_fake = torch.mean(dscrm_outputs["y"] ** 2)
+        # with torch.no_grad():
+        #     self.model.eval()
+        #     y_hat = self(batch)[0]
+        # dscrm_outputs = self.dscrm(y_hat.detach())
+        # loss_dscrm_fake = torch.mean(dscrm_outputs["y"] ** 2)
 
-        loss_dscrm = loss_dscrm_real + loss_dscrm_fake
+        # loss_dscrm = loss_dscrm_real + loss_dscrm_fake
 
-        opt1.zero_grad()
-        self.manual_backward(loss_dscrm)
-        opt1.step()
-        sch1.step()
+        # opt1.zero_grad()
+        # self.manual_backward(loss_dscrm)
+        # opt1.step()
+        # sch1.step()
 
         # Train generator
         with torch.cuda.amp.autocast(dtype=self.train_dtype):
             self.model.train()
             y_hat, commit_loss, vq_loss = self(batch)
 
-            loss_gen_re = F.l1_loss(y_hat, y)
+            loss_gen_re = F.l1_loss(y, y_hat)
             
-            loss_gen = loss_gen_re + commit_loss + vq_loss
+            loss_gen = loss_gen_re # + commit_loss + vq_loss
 
         opt2.zero_grad()
         self.manual_backward(loss_gen)
         opt2.step()
         sch2.step()
 
-        if batch_idx % 10 == 0:
+        if batch_idx % 5 == 0:
 
-            self.log("train/dscrm_loss_total", loss_dscrm, prog_bar=True)
-            self.log("train/dscrm_loss_real", loss_dscrm_real)
-            self.log("train/dscrm_loss_fake", loss_dscrm_fake)
+            # self.log("train/dscrm_loss_total", loss_dscrm, prog_bar=True)
+            # self.log("train/dscrm_loss_real", loss_dscrm_real)
+            # self.log("train/dscrm_loss_fake", loss_dscrm_fake)
 
             self.log("train/gen_loss_total", loss_gen, prog_bar=True)
-            self.log("train/gen_commit_loss", commit_loss)
-            self.log("train/gen_vq_loss", vq_loss)
+            # self.log("train/gen_commit_loss", commit_loss)
+            # self.log("train/gen_vq_loss", vq_loss)
             self.log("train/gen_loss_gen_re", loss_gen_re)
 
     def on_validation_epoch_start(self):

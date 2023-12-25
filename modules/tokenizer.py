@@ -15,7 +15,7 @@ from typing import Union
 import torchaudio as ta
 import re
 
-HIFIGAN_SR = 22050
+HIFIGAN_SR = 16000
 HIFIGAN_HOP_LENGTH = 256
 HIFIGAN_WIN_LENGTH = 1024
 HIFIGAN_MEL_CHANNELS = 80

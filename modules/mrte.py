@@ -152,7 +152,6 @@ class MRTE(nn.Module):
 
         out = self.compress_features(torch.cat([ge, phone], dim=-1))
         out = self.length_regulator(out, duration_tokens)
-
         return out
 
 def test():
@@ -190,5 +189,4 @@ def test():
     ml = torch.tensor([1200, 2400]).to(dtype=torch.int64).to('cuda')
 
     out = mrte(duration_tokens, t, tl, m, ml)
-    print(out.shape)
 

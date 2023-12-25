@@ -28,9 +28,8 @@ class MegaVQ(nn.Module):
             mel_lens_mrte: torch.Tensor, # (B,)
             mel_vqpe: torch.Tensor, # (B, T, mel_bins)
             ):
-        
         zq, commit_loss, vq_loss = self.vqpe(mel_vqpe)
-        x = self.mrte(duration_tokens, text, text_lens, mel_mrte, mel_lens_mrte)
-        x = torch.cat([x, zq], dim=-1)
-        x = self.decoder(x)
+        # x = self.mrte(duration_tokens, text, text_lens, mel_mrte, mel_lens_mrte)
+        # x = torch.cat([x, zq], dim=-1).transpose(1, 2)
+        x = self.decoder(zq.transpose(1, 2)).transpose(1, 2)
         return x, commit_loss, vq_loss

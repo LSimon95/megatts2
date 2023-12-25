@@ -28,13 +28,14 @@ from lhotse import validate_recordings_and_supervisions, CutSet, NumpyHdf5Writer
 from lhotse.audio import Recording, RecordingSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.recipes.utils import read_manifests_if_cached
+from lhotse.utils import Seconds, compute_num_frames
 
 from functools import partial
 
 from modules.tokenizer import (
     HIFIGAN_SR,
     HIFIGAN_HOP_LENGTH,
-    MelSpecExtractor, 
+    MelSpecExtractor,
     AudioFeatExtraConfig
 )
 from utils.symbol_table import SymbolTable
@@ -72,10 +73,6 @@ class DatasetMaker:
                             default=4, help='Number of workers')
         parser.add_argument('--test_set_ratio', type=float,
                             default=0.03, help='Test set ratio')
-        parser.add_argument('--duration_token_ms', type=float,
-                            default=(HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000), help='Unit of duration token')
-        parser.add_argument('--resample', type=bool,
-                            default=False, help='Resample wav')
         parser.add_argument('--trim_wav', type=bool,
                             default=False, help='Trim wav by textgrid')
 
@@ -103,34 +100,47 @@ class DatasetMaker:
             id = tg.split('/')[-1].split('.')[0]
             speaker = tg.split('/')[-2]
 
-            intervals = [i for i in read_textgrid(
-                tg) if (i[3] == 'phones' and i[2] != '')]
+            intervals = [i for i in read_textgrid(tg) if (i[3] == 'phones')]
 
-            if self.args.resample or self.args.trim_wav:
-                y, sr = librosa.load(f'{self.args.wavtxt_path}/{speaker}/{id}.wav')
-                if self.args.trim_wav:
-                    start = intervals[0][0]
-                    duration = intervals[-1][1]
-                    y = y[int(start*sr):int(duration*sr)]
-                if self.args.resample:
-                    y = librosa.resample(y, orig_sr=sr, target_sr=HIFIGAN_SR)
-                
+            y, sr = librosa.load(
+                f'{self.args.wavtxt_path}/{speaker}/{id}.wav', sr=HIFIGAN_SR)
+            if self.args.trim_wav:
+                if intervals[0][2] == '':
+                    intervals = intervals[1:]
+                if intervals[-1][2] == '':
+                    intervals = intervals[:-1]
+                start = intervals[0][0]*sr
+                stop = intervals[-1][1]*sr
+                y = y[int(start):int(stop)]
+                y = librosa.util.normalize(y)
+
                 sf.write(
                     f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, HIFIGAN_SR)
 
+            start = intervals[0][0]
+            stop = intervals[-1][1]
+
+            frame_shift=HIFIGAN_HOP_LENGTH / HIFIGAN_SR
+            duration = round(y.shape[-1] / HIFIGAN_SR, ndigits=12)
+            n_frames = compute_num_frames(
+                duration=duration,
+                frame_shift=frame_shift,
+                sampling_rate=HIFIGAN_SR,
+            )
+
             duration_tokens = []
             phone_tokens = []
-            for interval in intervals:
 
-                token = (interval[1] - interval[0]) * \
-                    1000 / self.args.duration_token_ms
-                if token > TOKEN_MAX - 1:
-                    token = TOKEN_MAX - 1
-                elif token < 1:
-                    token = 1
+            for i, interval in enumerate(intervals):
 
-                duration_tokens.append(int(token))
-                phone_tokens.append(interval[2])
+                phone_stop = (interval[1] - start)
+                n_frame_interval = int(phone_stop / frame_shift)
+                duration_tokens.append(n_frame_interval - sum(duration_tokens))
+                phone_tokens.append(interval[2] if interval[2] != '' else '<sil>')
+
+            if sum(duration_tokens) > n_frames:
+                print(f'{id} duration_tokens: {sum(duration_tokens)} must <= n_frames: {n_frames}')
+                assert False
 
             recording = Recording.from_file(
                 f'{self.args.wavtxt_path}/{speaker}/{id}.wav')
@@ -146,6 +156,11 @@ class DatasetMaker:
                 speaker=speaker,
                 text=text,
             )
+
+            if abs(recording.duration - (stop - start)) > 0.01:
+                print(f'{id} recording duration: {recording.duration} != {stop - start}')
+                assert False
+
             set_id = 0 if i % self.test_set_interval else 1
             recordings[set_id].append(recording)
             supervisions[set_id].append(segment)
