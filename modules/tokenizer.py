@@ -98,7 +98,6 @@ class TextTokenizer:
                 lty_tokens_list.append(token)
         return lty_tokens_list
 
-
 @dataclass
 class AudioFeatExtraConfig:
     frame_shift: Seconds = HIFIGAN_HOP_LENGTH / HIFIGAN_SR
@@ -130,6 +129,7 @@ class MelSpecExtractor(FeatureExtractor):
             n_mels=self.config.feature_dim,
             f_min=0,
             f_max=HIFIGAN_MAX_FREQ,
+            power=1,
         )(samples)
         duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
         num_frames = compute_num_frames(

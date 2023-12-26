@@ -43,10 +43,10 @@ class VQProsodyEncoder(nn.Module):
         
         mel = rearrange(mel, "B T D -> B D T")
         ze = self.convnet(mel)
-        # zq, _, commit_loss = self.vq(ze)
-        # vq_loss = F.mse_loss(ze.detach(), zq)
-        # zq = rearrange(zq, "B D T -> B T D")
-        return ze.transpose(1, 2), None, None
+        zq, _, commit_loss = self.vq(ze)
+        vq_loss = F.mse_loss(ze.detach(), zq)
+        zq = rearrange(zq, "B D T -> B T D")
+        return zq, commit_loss, vq_loss
 
 def test():
     model = VQProsodyEncoder()

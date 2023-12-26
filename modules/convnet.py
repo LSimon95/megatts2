@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from einops import rearrange
+
 from typing import List
 
 class ConvBlock(nn.Module):
@@ -19,7 +21,9 @@ class ConvBlock(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
-        x = self.norm(x.transpose(1, 2)).transpose(1, 2)
+        x = rearrange(x, "B D T -> B T D")
+        x = self.norm(x)
+        x = rearrange(x, "B T D -> B D T")
         x = self.dropout(x)
         x = self.activation(x)
         return x
@@ -52,7 +56,8 @@ class ResidualBlock(nn.Module):
         self.conv_stack = ConvStack(hidden_sizes, kernel_size, activation)
 
     def forward(self, x):
-        return x + self.conv_stack(x)
+        x = x + self.conv_stack(x)
+        return x
 
 class ConvNet(nn.Module):
     def __init__(
@@ -98,6 +103,14 @@ class ConvNet(nn.Module):
             layers += [
                 nn.AdaptiveAvgPool1d(1),
                 nn.Flatten(),
+            ]
+        else:
+            layers += [
+                nn.Conv1d(
+                    in_channels=hidden_sizes[-1],
+                    out_channels=hidden_sizes[-1],
+                    kernel_size=1,
+                ),
             ]
 
         self.layers = nn.Sequential(*layers)

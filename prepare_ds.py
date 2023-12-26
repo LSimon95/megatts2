@@ -104,11 +104,12 @@ class DatasetMaker:
 
             y, sr = librosa.load(
                 f'{self.args.wavtxt_path}/{speaker}/{id}.wav', sr=HIFIGAN_SR)
+
+            if intervals[0][2] == '':
+                intervals = intervals[1:]
+            if intervals[-1][2] == '':
+                intervals = intervals[:-1]
             if self.args.trim_wav:
-                if intervals[0][2] == '':
-                    intervals = intervals[1:]
-                if intervals[-1][2] == '':
-                    intervals = intervals[:-1]
                 start = intervals[0][0]*sr
                 stop = intervals[-1][1]*sr
                 y = y[int(start):int(stop)]
