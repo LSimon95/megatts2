@@ -18,14 +18,13 @@ from utils.utils import plot_spectrogram_to_numpy
 class MegaGANTrainer(pl.LightningModule):
     def __init__(
             self,
-            model: MegaVQ,
-            dscrm: Discriminator,
-            g_lr: float,
-            d_lr: float,
-            warmup_steps: float = 45,
-            gen_commit_loss_coeff: float = 10,
-            gen_vq_loss_coeff: float = 10,
-            dscrm_loss_coeff: float = 1.0,
+            G: MegaVQ,
+            D: Discriminator,
+            initial_learning_rate: float,
+            warmup_steps: float = 200,
+            G_commit_loss_coeff: float = 10,
+            G_vq_loss_coeff: float = 10,
+            G_adv_loss_coeff: float = 1.0,
 
             train_dtype: str = "float32",
             **kwargs
@@ -33,10 +32,9 @@ class MegaGANTrainer(pl.LightningModule):
 
         super().__init__()
         self.automatic_optimization = False
-        self.save_hyperparameters(ignore=['model', 'dscrm'])
-        self.model = model
-
-        self.dscrm = dscrm
+        self.save_hyperparameters(ignore=['G', 'D'])
+        self.G = G
+        self.D = D
         self.validation_step_outputs = []
 
         if self.hparams.train_dtype == "float32":
@@ -46,31 +44,33 @@ class MegaGANTrainer(pl.LightningModule):
             print("Using bfloat16")
 
     def configure_optimizers(self):
-        dscrm_params = [
-            {"params": self.dscrm.parameters()}
+        D_params = [
+            {"params": self.D.parameters()}
         ]
-        gen_params = [
-            {"params": self.model.parameters()}
+        G_params = [
+            {"params": self.G.parameters()}
         ]
 
-        opt_dscrm = torch.optim.AdamW(dscrm_params, lr=self.hparams.d_lr)
-        opt_gen = torch.optim.AdamW(gen_params, lr=self.hparams.g_lr)
+        D_opt = torch.optim.AdamW(
+            D_params, lr=self.hparams.initial_learning_rate)
+        G_opt = torch.optim.AdamW(
+            G_params, lr=self.hparams.initial_learning_rate)
 
-        scheduler_dscrm = transformers.get_cosine_schedule_with_warmup(
-            opt_dscrm, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
+        D_sch = transformers.get_cosine_schedule_with_warmup(
+            D_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
         )
-        scheduler_gen = transformers.get_cosine_schedule_with_warmup(
-            opt_gen, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
+        G_sch = transformers.get_cosine_schedule_with_warmup(
+            G_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
         )
 
         return (
-            [opt_dscrm, opt_gen],
-            [{"scheduler": scheduler_dscrm, "interval": "step"}, {
-                "scheduler": scheduler_gen, "interval": "step"}],
+            [D_opt, G_opt],
+            [{"scheduler": D_sch, "interval": "step"}, {
+                "scheduler": G_sch, "interval": "step"}],
         )
 
     def forward(self, batch: dict):
-        y_hat, commit_loss, vq_loss = self.model(
+        y_hat, commit_loss, vq_loss = self.G(
             duration_tokens=batch["duration_tokens"],
             text=batch["phone_tokens"],
             text_lens=batch["tokens_lens"],
@@ -85,49 +85,50 @@ class MegaGANTrainer(pl.LightningModule):
         opt1, opt2 = self.optimizers()
         sch1, sch2 = self.lr_schedulers()
 
-        # Train discriminator
-        y = batch["mel_targets"]
-        dscrm_outputs = self.dscrm(y)
-        loss_dscrm_real = torch.mean((dscrm_outputs["y"] - 1) ** 2)
-
-        with torch.no_grad():
-            self.model.eval()
-            y_hat = self(batch)[0]
-        dscrm_outputs = self.dscrm(y_hat.detach())
-        loss_dscrm_fake = torch.mean(dscrm_outputs["y"] ** 2)
-
-        loss_dscrm = loss_dscrm_real + loss_dscrm_fake
-
-        opt1.zero_grad()
-        self.manual_backward(loss_dscrm)
-        opt1.step()
-        sch1.step()
-
-        # Train generator
         with torch.cuda.amp.autocast(dtype=self.train_dtype):
-            self.model.train()
-            y_hat, commit_loss, vq_loss = self(batch)
+            self.G.train()
+            y_hat, G_loss_commit, G_loss_vq = self(batch)
 
-            loss_gen_re = F.l1_loss(y, y_hat)
+            # Train discriminator
+            y = batch["mel_targets"]
+            D_outputs = self.D(y)
+            D_loss_real = 0.5 * torch.mean((D_outputs["y"] - 1) ** 2)
 
-            loss_gen = loss_gen_re + self.hparams.gen_commit_loss_coeff * \
-                commit_loss + self.hparams.gen_vq_loss_coeff * vq_loss
+            D_outputs = self.D(y_hat.detach())
+            D_loss_fake = 0.5 * torch.mean(D_outputs["y"] ** 2)
 
-        opt2.zero_grad()
-        self.manual_backward(loss_gen)
-        opt2.step()
-        sch2.step()
+            D_loss_total = D_loss_real + D_loss_fake
+
+            opt1.zero_grad()
+            self.manual_backward(D_loss_total)
+            opt1.step()
+            sch1.step()
+
+            # Train generator
+            G_loss_re = F.l1_loss(y, y_hat)
+
+            G_loss = G_loss_re  # + G_loss_commit * self.hparams.G_commit_loss_coeff \
+            # + loss_vq * self.hparams.G_vq_loss_coeff
+
+            G_loss_adv = 0.5 * torch.mean((self.D(y_hat)["y"] - 1) ** 2)
+            G_loss_total = G_loss_adv * self.hparams.G_adv_loss_coeff + G_loss
+
+            opt2.zero_grad()
+            self.manual_backward(G_loss_total)
+            opt2.step()
+            sch2.step()
 
         if batch_idx % 5 == 0:
+            self.log("train/D_loss_total", D_loss_total, prog_bar=True)
+            self.log("train/D_loss_real", D_loss_real)
+            self.log("train/D_loss_fake", D_loss_fake)
 
-            self.log("train/dscrm_loss_total", loss_dscrm, prog_bar=True)
-            self.log("train/dscrm_loss_real", loss_dscrm_real)
-            self.log("train/dscrm_loss_fake", loss_dscrm_fake)
-
-            self.log("train/gen_loss_total", loss_gen, prog_bar=True)
-            self.log("train/gen_commit_loss", commit_loss)
-            self.log("train/gen_vq_loss", vq_loss)
-            self.log("train/gen_loss_gen_re", loss_gen_re)
+            self.log("train/G_loss_total", G_loss_total, prog_bar=True)
+            self.log("train/G_loss_adv", G_loss_adv)
+            self.log("train/G_loss", G_loss)
+            self.log("train/G_loss_commit", G_loss_commit)
+            self.log("train/G_loss_vq", G_loss_vq)
+            self.log("train/G_loss_re", G_loss_re)
 
     def on_validation_epoch_start(self):
         pass
@@ -136,15 +137,15 @@ class MegaGANTrainer(pl.LightningModule):
 
         y = batch["mel_targets"]
         with torch.no_grad():
-            self.model.eval()
+            self.G.eval()
             y_hat, _, _ = self(batch)
 
-        loss_gen_re = F.l1_loss(y, y_hat)
+        loss_re = F.l1_loss(y, y_hat)
 
         self.validation_step_outputs.append({
             "y": y[0],
             "y_hat": y_hat[0],
-            "loss_gen_re": loss_gen_re,
+            "loss_re": loss_re,
         })
 
     def on_validation_epoch_end(self):
@@ -156,15 +157,16 @@ class MegaGANTrainer(pl.LightningModule):
 
             self.logger.experiment.add_image(
                 "val/mel_analyse",
-                plot_spectrogram_to_numpy(mel.data.cpu().numpy(), mel_hat.data.cpu().numpy()),
+                plot_spectrogram_to_numpy(
+                    mel.data.cpu().numpy(), mel_hat.data.cpu().numpy()),
                 self.global_step,
                 dataformats="HWC",
             )
 
-        loss_gen_re = torch.mean(torch.stack(
-            [x["loss_gen_re"] for x in outputs]))
+        loss_re = torch.mean(torch.stack(
+            [x["loss_re"] for x in outputs]))
 
-        self.log("val/loss_gen_re", loss_gen_re, sync_dist=True)
+        self.log("val/loss_re", loss_re, sync_dist=True)
 
         self.validation_step_outputs = []
 

@@ -30,6 +30,6 @@ class MegaVQ(nn.Module):
             ):
         zq, commit_loss, vq_loss = self.vqpe(mel_vqpe)
         x = self.mrte(duration_tokens, text, text_lens, mel_mrte, mel_lens_mrte)
-        x = torch.cat([x, zq], dim=-1).transpose(1, 2)
-        x = self.decoder(zq.transpose(1, 2)).transpose(1, 2)
+        # x = torch.cat([x, zq], dim=-1).transpose(1, 2)
+        x = self.decoder(x.transpose(1, 2)).transpose(1, 2)
         return x, commit_loss, vq_loss

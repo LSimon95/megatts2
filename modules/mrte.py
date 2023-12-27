@@ -146,12 +146,12 @@ class MRTE(nn.Module):
         mel_context = self.mel_encoder(mel_pos, mel_lens)
         phone = self.mrte_decoder(text, mel_context, text_lens)
 
-        mel = rearrange(mel, "B T D -> B D T")
-        ge = self.ge(mel)
-        ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
+        # mel = rearrange(mel, "B T D -> B D T")
+        # ge = self.ge(mel)
+        # ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
 
-        out = self.compress_features(torch.cat([ge, phone], dim=-1))
-        out = self.length_regulator(out, duration_tokens)
+        # out = self.compress_features(torch.cat([ge, phone], dim=-1))
+        out = self.length_regulator(phone, duration_tokens)
         return out
 
 def test():

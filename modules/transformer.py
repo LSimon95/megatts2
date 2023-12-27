@@ -46,14 +46,14 @@ class MultiHeadAttention(nn.Module):
             v = self.w_v(kv)
             q = self.w_q(q)
 
-        
-        q = q.view(bsz, self.n_heads, tgt_len, self.head_dim)
-        k = k.view(bsz, self.n_heads, src_len, self.head_dim)
-        v = v.view(bsz, self.n_heads, src_len, self.head_dim)
+        q = q.view(bsz, tgt_len, self.n_heads, self.head_dim).transpose(1, 2)
+        k = k.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
 
         att = F.scaled_dot_product_attention(
             q, k, v, mask, self.dropout, False)
-        att = att.permute(2, 0, 1, 3).contiguous().view(bsz, tgt_len, self.qkv_dim)
+
+        att = att.transpose(1, 2).contiguous().view(bsz, tgt_len, self.qkv_dim)
 
         return self.out_proj(att)
 
@@ -99,7 +99,10 @@ class TransformerDecoderLayer(nn.Module):
         x = x + self.attn1(self.norm1(x), mask=mask)
         x = x + self.attn2(self.norm2(x), kv=context)
         if self.conv_ff:
-            x = x + self.ff(self.norm3(x).transpose(1, 2)).transpose(1, 2)
+            x = self.norm3(x)
+            x = rearrange(x, 'B T D -> B D T')
+            x = x + self.ff(x)
+            x = rearrange(x, 'B D T -> B T D')
         else:
             x = x + self.ff(self.norm3(x))
         return x
