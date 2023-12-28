@@ -10,8 +10,8 @@ from modules.embedding import TokenEmbedding, SinePositionalEmbedding
 from modules.convnet import ConvNet
 from modules.transformer import (TransformerEncoder, 
                                  TransformerEncoderLayer,
-                                 TransformerDecoder,
-                                 TransformerDecoderLayer)
+                                 MultiHeadAttention)
+from utils.utils import make_attn_mask
 
 from modules.tokenizer import (
     HIFIGAN_SR,
@@ -65,26 +65,28 @@ class MRTE(nn.Module):
             mel_frames: int = HIFIGAN_HOP_LENGTH,
             attn_dim: int = 512,
             ff_dim: int = 1024,
-            nhead: int = 2,
+            n_heads: int = 2,
             n_layers: int = 8,
             ge_kernel_size: int = 31,
             ge_hidden_sizes: List = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
             ge_activation: str = 'ReLU',
             ge_out_channels: int = 512,
             duration_tokne_ms: float = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
-            text_vocab_size: int = 320,
+            phone_vocab_size: int = 320,
             dropout: float = 0.1,
             sample_rate: int = HIFIGAN_SR,
     ):
         super(MRTE, self).__init__()
+
+        self.n_heads = n_heads
         
-        self.text_embedding = TokenEmbedding(
+        self.phone_embedding = TokenEmbedding(
             dim_model=attn_dim,
-            vocab_size=text_vocab_size,
+            vocab_size=phone_vocab_size,
             dropout=dropout,
         )
 
-        self.text_pos_embedding = SinePositionalEmbedding(
+        self.phone_pos_embedding = SinePositionalEmbedding(
             dim_model=attn_dim,
             dropout=dropout,
         )
@@ -100,21 +102,30 @@ class MRTE(nn.Module):
                 dim=attn_dim,
                 ff_dim=ff_dim,
                 conv_ff=True,
-                n_heads=nhead,
+                n_heads=n_heads,
                 dropout=dropout,
             ),
             num_layers=n_layers,
         )
 
-        self.mrte_decoder = TransformerDecoder(
-            TransformerDecoderLayer(
+        self.phone_encoder = TransformerEncoder(
+            TransformerEncoderLayer(
                 dim=attn_dim,
                 ff_dim=ff_dim,
-                n_heads=nhead,
+                conv_ff=True,
+                n_heads=n_heads,
                 dropout=dropout,
             ),
             num_layers=n_layers,
         )
+
+        self.mha = MultiHeadAttention(
+            qkv_dim=attn_dim,
+            n_heads=n_heads,
+            dropout=dropout,
+        )
+        self.norm = nn.LayerNorm(attn_dim)
+        self.activation = nn.ReLU()
 
         self.compress_features = nn.Linear(attn_dim + ge_out_channels, ge_out_channels)
 
@@ -131,27 +142,31 @@ class MRTE(nn.Module):
     def forward(
             self,
             duration_tokens: torch.Tensor, # (B, T)
-            text: torch.Tensor, # (B, T)
-            text_lens: torch.Tensor, # (B,)
+            phone: torch.Tensor, # (B, T)
+            phone_lens: torch.Tensor, # (B,)
             mel: torch.Tensor, # (B, T, mel_bins)
             mel_lens: torch.Tensor, # (B,)
     ):
         
-        text = self.text_embedding(text)
-        text = self.text_pos_embedding(text)
+        phone_emb = self.phone_embedding(phone)
+        phone_pos = self.phone_pos_embedding(phone_emb)
 
         mel_emb = self.mel_embedding(mel)
         mel_pos = self.mel_pos_embedding(mel_emb)
 
         mel_context = self.mel_encoder(mel_pos, mel_lens)
-        phone = self.mrte_decoder(text, mel_context, text_lens)
+        phone_x = self.phone_encoder(phone_pos, phone_lens)
+
+        phone_latent = self.mha(phone_x, kv=mel_context)
+        phone_latent = self.norm(phone_latent)
+        phone_latent = self.activation(phone_latent)
 
         # mel = rearrange(mel, "B T D -> B D T")
         # ge = self.ge(mel)
         # ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
 
         # out = self.compress_features(torch.cat([ge, phone], dim=-1))
-        out = self.length_regulator(phone, duration_tokens)
+        out = self.length_regulator(phone_latent, duration_tokens)
         return out
 
 def test():
@@ -175,7 +190,7 @@ def test():
         ge_activation = 'ReLU',
         ge_out_channels = 512,
         duration_tokne_ms = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
-        text_vocab_size = 320,
+        phone_vocab_size = 320,
         dropout = 0.1,
         sample_rate = HIFIGAN_SR,
     )
