@@ -1,5 +1,5 @@
 # megatts2
-Unoffical implement of Megatts2
+Unofficial implement of Megatts2
 
 ## TODO
 - [x] Prepare dataset
@@ -28,7 +28,7 @@ Unoffical implement of Megatts2
 5. Run `python3 prepare_ds.py --stage 1 --num_workers 4 --wavtxt_path data/wavs --text_grid_path data/textgrids --ds_path data/ds` 
 
 ## Train
-Training procedure refer pytorch-lightning
+Training procedure refers to Pytorch-lightning
 
 ## License
 - MIT
