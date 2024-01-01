@@ -47,9 +47,7 @@ class ConvStack(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
     def forward(self, x):
-        for block in self.blocks:
-            x = block(x)
-        return x
+        return self.blocks(x)
 
 
 class ResidualBlock(nn.Module):
@@ -59,8 +57,7 @@ class ResidualBlock(nn.Module):
         self.conv_stack = ConvStack(hidden_sizes, kernel_size, activation)
 
     def forward(self, x):
-        x = x + self.conv_stack(x)
-        return x
+        return x + self.conv_stack(x)
 
 
 class ConvNet(nn.Module):

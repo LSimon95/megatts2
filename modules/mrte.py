@@ -161,11 +161,11 @@ class MRTE(nn.Module):
         phone_latent = self.norm(phone_latent)
         phone_latent = self.activation(phone_latent)
 
-        # mel = rearrange(mel, "B T D -> B D T")
-        # ge = self.ge(mel)
-        # ge = ge.unsqueeze(1).repeat(1, phone.shape[1], 1)
+        mel = rearrange(mel, "B T D -> B D T")
+        ge = self.ge(mel)
+        ge = ge.unsqueeze(1).repeat(1, phone_latent.shape[1], 1)
 
-        # out = self.compress_features(torch.cat([ge, phone], dim=-1))
+        out = self.compress_features(torch.cat([ge, phone_latent], dim=-1))
         out = self.length_regulator(phone_latent, duration_tokens)
         return out
 

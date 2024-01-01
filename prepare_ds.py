@@ -43,9 +43,6 @@ from utils.symbol_table import SymbolTable
 import soundfile as sf
 import librosa
 
-TOKEN_MAX = 256
-
-
 def make_lab(tt, wav):
     id = wav.split('/')[-1].split('.')[0]
     folder = '/'.join(wav.split('/')[:-1])
@@ -95,6 +92,7 @@ class DatasetMaker:
         recordings = [[], []]  # train, test
         supervisions = [[], []]
         set_name = ['train', 'valid']
+        max_duration_token = 0
 
         for i, tg in tqdm(enumerate(tgs)):
             id = tg.split('/')[-1].split('.')[0]
@@ -170,6 +168,8 @@ class DatasetMaker:
             segment.custom['duration_tokens'] = duration_tokens
             segment.custom['phone_tokens'] = phone_tokens
 
+            max_duration_token = max(max_duration_token, len(duration_tokens))
+
             assert len(duration_tokens) == len(phone_tokens)
 
         for i in range(2):
@@ -208,6 +208,8 @@ class DatasetMaker:
 
             cut_set.to_file(
                 f"{self.args.ds_path}/cuts_{partition}.jsonl.gz")
+            
+        print(f'max_duration_token: {max_duration_token}')
 
 
 if __name__ == '__main__':

@@ -107,8 +107,8 @@ class MegaGANTrainer(pl.LightningModule):
             # Train generator
             G_loss_re = F.l1_loss(y, y_hat)
 
-            G_loss = G_loss_re  # + G_loss_commit * self.hparams.G_commit_loss_coeff \
-            # + loss_vq * self.hparams.G_vq_loss_coeff
+            G_loss = G_loss_re + G_loss_commit * self.hparams.G_commit_loss_coeff + \
+                G_loss_vq * self.hparams.G_vq_loss_coeff
 
             G_loss_adv = 0.5 * torch.mean((self.D(y_hat)["y"] - 1) ** 2)
             G_loss_total = G_loss_adv * self.hparams.G_adv_loss_coeff + G_loss

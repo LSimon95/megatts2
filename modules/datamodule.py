@@ -180,13 +180,14 @@ class TTSDataModule(pl.LightningDataModule):
             TTSDataset(spk2cuts, f'{self.hparams.ds_path}/unique_text_tokens.k2symbols', 10),
             batch_size=None,
             num_workers=self.hparams.num_workers,
+            pin_memory=True,
             sampler=DynamicBucketingSampler(
                 cs_train,
                 max_duration=self.hparams.max_duration_batch,
                 shuffle=True,
                 num_buckets=self.hparams.num_buckets,
                 drop_last=True,
-                seed=seed
+                seed=seed,
             ),
         )
 
