@@ -1,5 +1,5 @@
 # megatts2
-Unofficial implement of Megatts2
+Unofficial implementation of Megatts2
 
 ## TODO
 - [x] Prepare dataset
@@ -29,6 +29,10 @@ Unofficial implement of Megatts2
 
 ## Train
 Training procedure refers to Pytorch-lightning
+
+## Reconstructed mel-spectrogram
+### 400k steps on aishell dataset train by 4090
+![image info](examples/mel_step_400k_re_loss_0.4771.png) 
 
 ## License
 - MIT
