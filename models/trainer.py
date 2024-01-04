@@ -57,10 +57,10 @@ class MegaGANTrainer(pl.LightningModule):
             G_params, lr=self.hparams.initial_learning_rate)
 
         D_sch = transformers.get_cosine_schedule_with_warmup(
-            D_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
+            D_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps // 2
         )
         G_sch = transformers.get_cosine_schedule_with_warmup(
-            G_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
+            G_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps // 2
         )
 
         return (
@@ -169,10 +169,3 @@ class MegaGANTrainer(pl.LightningModule):
         self.log("val/loss_re", loss_re, sync_dist=True)
 
         self.validation_step_outputs = []
-
-    @property
-    def global_step(self):
-        """
-        Override global_step so that it returns the total number of batches processed
-        """
-        return self.trainer.fit_loop.epoch_loop.total_batch_idx
