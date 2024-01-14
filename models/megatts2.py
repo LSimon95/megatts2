@@ -16,13 +16,26 @@ class MegaVQ(nn.Module):
             self,
             mrte: MRTE,
             vqpe: VQProsodyEncoder,
-            decoder: ConvNet,
+            kernel_size: int = 5,
+            activation: str = 'ReLU',
+            hidden_size: int = 512,
+            decoder_n_stack: int = 4,
+            decoder_n_block: int = 2
+
     ):
         super(MegaVQ, self).__init__()
 
         self.mrte = mrte
         self.vqpe = vqpe
-        self.decoder = decoder
+        self.decoder = ConvNet(
+            in_channels=mrte.hidden_size + vqpe.vq.dimension,
+            out_channels=mrte.mel_bins,
+            hidden_size=hidden_size,
+            n_stack=decoder_n_stack,
+            n_block=decoder_n_block,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
 
     def forward(
             self,

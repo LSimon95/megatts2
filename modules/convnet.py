@@ -32,11 +32,11 @@ class ConvBlock(nn.Module):
 
 
 class ConvStack(nn.Module):
-    def __init__(self, hidden_sizes, kernel_size, activation):
+    def __init__(self, hidden_size, n_block, kernel_size, activation):
         super(ConvStack, self).__init__()
 
         blocks = []
-        for hidden_size in hidden_sizes:
+        for i in range(n_block):
             blocks += [
                 ConvBlock(
                     hidden_size=hidden_size,
@@ -49,109 +49,157 @@ class ConvStack(nn.Module):
     def forward(self, x):
         return self.blocks(x)
 
+class ResidualBlockStack(nn.Module):
+    def __init__(self, hidden_size, n_stack, n_block, kernel_size, activation):
+        super(ResidualBlockStack, self).__init__()
 
-class ResidualBlock(nn.Module):
-    def __init__(self, hidden_sizes, kernel_size, activation):
-        super(ResidualBlock, self).__init__()
+        self.conv_stacks = []
 
-        self.conv_stack = ConvStack(hidden_sizes, kernel_size, activation)
+        for i in range(n_stack):
+            self.conv_stacks += [
+                ConvStack(
+                    hidden_size=hidden_size,
+                    n_block=n_block,
+                    kernel_size=kernel_size,
+                    activation=activation,
+                )
+            ]
+        self.conv_stacks = nn.Sequential(*self.conv_stacks)
 
     def forward(self, x):
-        return x + self.conv_stack(x)
-
+        for conv_stack in self.conv_stacks:
+            x = x + conv_stack(x)
+        return x
 
 class ConvNet(nn.Module):
     def __init__(
-            self,
-            hidden_sizes: List = [128, 256, 256, 512, 512],
-            kernel_size: int = 5,
-            stack_size: int = 3,
-            activation: str = 'ReLU',
-            avg_pooling: bool = False
+        self,
+        in_channels: int,
+        out_channels: int,
+        hidden_size: int,
+        n_stack: int,
+        n_block: int,
+        kernel_size: int,
+        activation: str,
+        last_layer_avg_pooling: bool = False,
     ):
         super(ConvNet, self).__init__()
-        # First layer
-        layers = [
-            nn.Conv1d(
-                hidden_sizes[0],
-                hidden_sizes[0],
-                kernel_size=kernel_size,
-                padding=(kernel_size - 1) // 2
-            ),
-        ]
-        # Middle layers
-        for i in range(len(hidden_sizes)):
-            if i == 0:
-                layers += [
-                    ConvStack(
-                        hidden_sizes=[hidden_sizes[0]] * stack_size,
-                        kernel_size=kernel_size,
-                        activation=activation,
-                    )
-                ]
-            else:
-                layers += [
-                    ResidualBlock(
-                        hidden_sizes=[hidden_sizes[i]] * stack_size,
-                        kernel_size=kernel_size,
-                        activation=activation,
-                    )
-                ]
-            # Upsample or downsample
-            if (i != len(hidden_sizes) - 1) and (hidden_sizes[i] != hidden_sizes[i + 1]):
-                layers += [
-                    nn.Conv1d(
-                        hidden_sizes[i],
-                        hidden_sizes[i + 1],
-                        kernel_size=kernel_size,
-                        padding=(kernel_size - 1) // 2
-                    ),
-                    getattr(nn, activation)(),
-                ]
-        # Last layer
-        if avg_pooling:
-            layers += [
-                nn.AdaptiveAvgPool1d(1),
-                nn.Flatten(),
-            ]
-        else:
-            layers += [
-                nn.Conv1d(
-                    hidden_sizes[-1],
-                    hidden_sizes[-1],
-                    kernel_size=kernel_size,
-                    padding=(kernel_size - 1) // 2
-                ),
-            ]
 
-        self.layers = nn.Sequential(*layers)
+        self.first_layer = first_conv = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=hidden_size,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=(kernel_size - 1) // 2,
+        )
+
+        self.conv_stack = ResidualBlockStack(
+            hidden_size=hidden_size,
+            n_stack=n_stack,
+            n_block=n_block,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
+
+        if last_layer_avg_pooling:
+            self.last_layer = nn.AdaptiveAvgPool1d(1)
+        else:
+            self.last_layer = nn.Conv1d(
+                in_channels=hidden_size,
+                out_channels=out_channels,
+                kernel_size=kernel_size,
+                stride=1,
+                padding=(kernel_size - 1) // 2,
+            )
 
     def forward(self, x):
-        return self.layers(x)
+        x = self.first_layer(x)
+        x = self.conv_stack(x)
+        x = self.last_layer(x)
+        return x
 
+
+class ConvNetDouble(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        hidden_size: int,
+        n_stack: int,
+        n_block: int,
+        middle_layer: nn.Module,
+        kernel_size: int,
+        activation: str,
+    ):
+        super(ConvNetDouble, self).__init__()
+
+        self.first_layer = first_conv = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=hidden_size,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=(kernel_size - 1) // 2,
+        )
+
+        self.conv_stack1 = ResidualBlockStack(
+            hidden_size=hidden_size,
+            n_stack=n_stack,
+            n_block=n_block,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
+
+        self.middle_layer = middle_layer
+
+        self.conv_stack2 = ResidualBlockStack(
+            hidden_size=hidden_size,
+            n_stack=n_stack,
+            n_block=n_block,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
+
+        self.last_layer = nn.Conv1d(
+            in_channels=hidden_size,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            stride=1,
+            padding=(kernel_size - 1) // 2,
+        )
+
+    def forward(self, x):
+        x = self.first_layer(x)
+        x = self.conv_stack1(x)
+        x = self.middle_layer(x)
+        x = self.conv_stack2(x)
+        x = self.last_layer(x)
+        return x
 
 def test():
-
-    # Upsample
     x = torch.rand(2, 128, 240)
-    net = ConvNet(
-        hidden_sizes=[128, 256, 256, 512, 512],
+    convnet = ConvNet(
+        in_channels=128,
+        hidden_size=128,
+        n_stack=2,
+        n_block=2,
+        kernel_size=3,
+        activation="ReLU",
     )
-    y = net(x)
+    y = convnet(x)
     print(y.shape)
 
-    # Downsample
-    net = ConvNet(
-        hidden_sizes=[512, 512, 256, 256, 128],
+    convnet = ConvNetDouble(
+        in_channels=128,
+        hidden_size=128,
+        n_stack=2,
+        n_block=2,
+        middle_layer=nn.MaxPool1d(
+            kernel_size=8,
+            stride=8,
+        ),
+        kernel_size=3,
+        activation="ReLU",
     )
-    y = net(y)
+    y = convnet(x)
     print(y.shape)
 
-    # pooling
-    x = torch.rand(2, 128, 240)
-    net = ConvNet(
-        hidden_sizes=[128, 256, 256, 512, 512],
-        avg_pooling=True,
-    )
-    y = net(x)
-    print(y.shape)

@@ -63,13 +63,6 @@ class TokensCollector():
 
         return phone_tokens, duration_tokens, lens
 
-def dynamic_range_compression_torch(x, C=1, clip_val=1e-5):
-    return torch.log(torch.clamp(x, min=clip_val) * C)
-
-def spectral_normalize_torch(magnitudes):
-    output = dynamic_range_compression_torch(magnitudes)
-    return output
-
 class TTSDataset(torch.utils.data.Dataset):
     def __init__(
             self,
@@ -114,19 +107,13 @@ class TTSDataset(torch.utils.data.Dataset):
                 mel_timbre = torch.cat([mel_timbre, mel_timbres_same_spk[i, :mel_timbre_lens_same_spk[i]]], dim=0)
             mel_timbres_list.append(mel_timbre)
             mel_timbre_lens_list.append(mel_timbre.shape[0])
-            
 
-        max_len = max(mel_timbre_lens_list)
-        mel_timbres_list_padded = []
-        for i in range(len(mel_timbres_list)):
-            mel_timbres_list_padded.append(F.pad(
-                mel_timbres_list[i], (0, 0, 0, max_len - mel_timbre_lens_list[i]), mode='constant', value=0))
+        mel_timbres_list_cutted = []
+        min_mel_timbres_len = min(mel_timbre_lens_list)
+        for mel_timbre in mel_timbres_list:
+            mel_timbres_list_cutted.append(mel_timbre[:min_mel_timbres_len, :])
 
-        mel_timbres = torch.stack(mel_timbres_list_padded).type(torch.float32)
-        mel_timbre_lens = torch.Tensor(mel_timbre_lens_list).to(dtype=torch.int32)
-
-        mel_targets = spectral_normalize_torch(mel_targets)
-        mel_timbres = spectral_normalize_torch(mel_timbres)
+        mel_timbres = torch.stack(mel_timbres_list_cutted).type(torch.float32)
 
         batch = {
             "phone_tokens":  phone_tokens,
@@ -135,7 +122,6 @@ class TTSDataset(torch.utils.data.Dataset):
             "mel_targets": mel_targets,
             "mel_target_lens": mel_target_lens,
             "mel_timbres": mel_timbres,
-            "mel_timbre_lens": mel_timbre_lens
         }
 
         return batch

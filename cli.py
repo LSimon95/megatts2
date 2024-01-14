@@ -5,6 +5,7 @@ from models.trainer import MegaGANTrainer
 from modules.datamodule import TTSDataModule
 
 
+
 def cli_main():
     cli = LightningCLI(MegaGANTrainer, TTSDataModule)
 

@@ -34,7 +34,7 @@ trainer:
 
   devices: [0]
 model:
-  G: 
+  G:
     class_path: models.megatts2.MegaVQ
     init_args:
       mrte:
@@ -42,61 +42,49 @@ model:
         init_args:
           mel_bins: 80
           mel_frames: 256
-          attn_dim: 512
-          ff_dim: 1024
-          n_heads: 2
-          n_layers: 8
-          ge_kernel_size: 31
-          ge_hidden_sizes:
-          - 80
-          - 256
-          - 256
-          - 512
-          - 512
-          ge_activation: ReLU
-          ge_out_channels: 512
-          duration_tokne_ms: 16.0
+          mel_activation: ReLU
+          mel_kernel_size: 3
+          mel_stride: 16
+          mel_n_stack: 5
+          mel_n_block: 2
+          content_ff_dim: 1024
+          content_n_heads: 2
+          content_n_layers: 8
+          hidden_size: 512
+          duration_token_ms: 16.0
           phone_vocab_size: 320
           dropout: 0.1
           sample_rate: 16000
       vqpe:
         class_path: modules.vqpe.VQProsodyEncoder
         init_args:
-          hidden_sizes:
-          - 80
-          - 256
-          - 256
-          - 512
-          - 512
+          mel_bins: 80
+          stride: 8
+          hidden_size: 384
           kernel_size: 5
-          stack_size: 3
+          n_stack: 3
+          n_block: 2
+          vq_bins: 1024
+          vq_dim: 256
           activation: ReLU
-      decoder:
-        class_path: modules.convnet.ConvNet
-        init_args:
-          hidden_sizes:
-          - 1024
-          - 512
-          - 256
-          - 256
-          - 80
-          kernel_size: 5
-          stack_size: 3
-          activation: ReLU
-          avg_pooling: false
+      kernel_size: 5
+      activation: ReLU
+      hidden_size: 512
+      decoder_n_stack: 4
+      decoder_n_block: 2
   D:
     class_path: modules.dscrm.Discriminator
     init_args:
       time_lengths:
-      - 24
-      - 48
-      - 96
+      - 32
+      - 64
+      - 128
       freq_length: 80
       kernel:
       - 3
       - 3
       c_in: 1
-      hidden_size: 128
+      hidden_size: 192
   initial_learning_rate: 2e-5
   warmup_steps: 200.0
 
@@ -107,10 +95,10 @@ model:
   class_path: models.trainer.MegaGANTrainer
 data:
   ds_path: /root/autodl-tmp/megatts2/data/ds/
-  max_duration_batch: 22
-  min_duration: 1.6
+  max_duration_batch: 10
+  min_duration: 2.1
   max_duration: 20
   num_buckets: 10
   num_workers: 4
   class_path: modules.datamodule.TTSDataModule
-ckpt_path: last.ckpt
+ckpt_path: null

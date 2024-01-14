@@ -12,8 +12,9 @@ import torch
 
 from typing import Union
 
-import torchaudio as ta
 import re
+
+from speechbrain.lobes.models.FastSpeech2 import mel_spectogram
 
 HIFIGAN_SR = 16000
 HIFIGAN_HOP_LENGTH = 256
@@ -121,16 +122,23 @@ class MelSpecExtractor(FeatureExtractor):
             samples = torch.from_numpy(samples)
         torch.set_num_threads(1)
         # Hifigan
-        mel_spec = ta.transforms.MelSpectrogram(
-            sample_rate=sampling_rate,
-            n_fft=HIFIGAN_NFFT,
-            win_length=HIFIGAN_WIN_LENGTH,
-            hop_length=HIFIGAN_HOP_LENGTH,
+        mel_spec, _ = mel_spectogram(
+            audio = samples.squeeze(),
+            sample_rate = sampling_rate,
+            hop_length = HIFIGAN_HOP_LENGTH,
+            win_length = HIFIGAN_WIN_LENGTH,
             n_mels=self.config.feature_dim,
+            n_fft=HIFIGAN_NFFT,
             f_min=0,
             f_max=HIFIGAN_MAX_FREQ,
             power=1,
-        )(samples)
+            normalized=False,
+            min_max_energy_norm=True,
+            norm="slaney",
+            mel_scale="slaney",
+            compression=True
+        )
+
         duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
         num_frames = compute_num_frames(
             duration=duration,
