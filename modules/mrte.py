@@ -138,25 +138,23 @@ class MRTE(nn.Module):
             mel_frames, sample_rate, duration_token_ms)
         
 
-        self.test_pllm = TransformerEncoder(
-            TransformerEncoderLayer(
-                dim=1024,
-                ff_dim=2048,
-                conv_ff=True,
-                n_heads=16,
-                dropout=dropout,
-            ),
-            num_layers=12,
-        )
+        # self.test_pllm = TransformerEncoder(
+        #     TransformerEncoderLayer(
+        #         dim=1024,
+        #         ff_dim=2048,
+        #         conv_ff=True,
+        #         n_heads=16,
+        #         dropout=dropout,
+        #     ),
+        #     num_layers=12,
+        # )
 
-    def forward(
+    def tc_latent(
             self,
-            duration_tokens: torch.Tensor,  # (B, T)
             phone: torch.Tensor,  # (B, T)
             phone_lens: torch.Tensor,  # (B,)
             mel: torch.Tensor,  # (B, T, mel_bins)
     ):
-
         phone_emb = self.phone_embedding(phone)
         phone_pos = self.phone_pos_embedding(phone_emb)
 
@@ -165,11 +163,22 @@ class MRTE(nn.Module):
         mel_context = rearrange(mel_context, 'B D T -> B T D')
         phone_x = self.phone_encoder(phone_pos, phone_lens)
 
-        phone_latent = self.mha(phone_x, kv=mel_context)
-        phone_latent = self.norm(phone_latent)
-        phone_latent = self.activation(phone_latent)
+        tc_latent = self.mha(phone_x, kv=mel_context)
+        tc_latent = self.norm(tc_latent)
+        tc_latent = self.activation(tc_latent)
 
-        out = self.length_regulator(phone_latent, duration_tokens)
+        return tc_latent
+
+    def forward(
+            self,
+            duration_tokens: torch.Tensor,  # (B, T)
+            phone: torch.Tensor,  # (B, T)
+            phone_lens: torch.Tensor,  # (B,)
+            mel: torch.Tensor,  # (B, T, mel_bins)
+    ):
+        tc_latent = self.tc_latent(phone, phone_lens, mel)
+        
+        out = self.length_regulator(tc_latent, duration_tokens)
         return out
 
 

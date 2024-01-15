@@ -11,6 +11,7 @@ from modules.transformer import TransformerEncoder, TransformerEncoderLayer
 
 from einops import rearrange
 
+
 class MegaVQ(nn.Module):
     def __init__(
             self,
@@ -40,15 +41,13 @@ class MegaVQ(nn.Module):
     def forward(
             self,
             duration_tokens: torch.Tensor,  # (B, T)
-            text: torch.Tensor,  # (B, T)
-            text_lens: torch.Tensor,  # (B,)
+            phone: torch.Tensor,  # (B, T)
+            phone_lens: torch.Tensor,  # (B,)
             mel_mrte: torch.Tensor,  # (B, T, mel_bins)
-            mel_lens_mrte: torch.Tensor,  # (B,)
             mel_vqpe: torch.Tensor,  # (B, T, mel_bins)
     ):
         zq, commit_loss, vq_loss = self.vqpe(mel_vqpe)
-        x = self.mrte(duration_tokens, text, text_lens,
-                      mel_mrte, mel_lens_mrte)
+        x = self.mrte(duration_tokens, phone, phone_lens, mel_mrte)
         x = torch.cat([x, zq], dim=-1)
 
         x = rearrange(x, 'B T D -> B D T')
@@ -56,3 +55,12 @@ class MegaVQ(nn.Module):
         x = rearrange(x, 'B D T -> B T D')
 
         return x, commit_loss, vq_loss
+
+    def tc_latent(
+            self,
+            phone: torch.Tensor,  # (B, T)
+            phone_lens: torch.Tensor,  # (B,)
+            mel_mrte: torch.Tensor,  # (B, T, mel_bins)
+    ):
+        x = self.mrte.tc_latent(phone, phone_lens, mel_mrte)
+        return x

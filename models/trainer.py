@@ -11,9 +11,11 @@ import math
 
 from .megatts2 import MegaVQ
 from modules.dscrm import Discriminator
+from modules.tokenizer import HIFIGAN_SR
 
 from utils.utils import plot_spectrogram_to_numpy
 
+from speechbrain.pretrained import HIFIGAN
 
 class MegaGANTrainer(pl.LightningModule):
     def __init__(
@@ -72,10 +74,9 @@ class MegaGANTrainer(pl.LightningModule):
     def forward(self, batch: dict):
         y_hat, commit_loss, vq_loss = self.G(
             duration_tokens=batch["duration_tokens"],
-            text=batch["phone_tokens"],
-            text_lens=batch["tokens_lens"],
+            phone=batch["phone_tokens"],
+            phone_lens=batch["tokens_lens"],
             mel_mrte=batch["mel_timbres"],
-            mel_lens_mrte=batch["mel_timbre_lens"],
             mel_vqpe=batch["mel_targets"]
         )
 
@@ -161,6 +162,27 @@ class MegaGANTrainer(pl.LightningModule):
                     mel.data.cpu().numpy(), mel_hat.data.cpu().numpy()),
                 self.global_step,
                 dataformats="HWC",
+            )
+
+            with torch.no_grad():
+                hifi_gan = HIFIGAN.from_hparams(source="speechbrain/tts-hifigan-libritts-16kHz")
+                hifi_gan.eval()
+
+                audio_target = hifi_gan.decode_batch(mel.unsqueeze(0).cpu())
+                audio_hat = hifi_gan.decode_batch(mel_hat.unsqueeze(0).cpu())
+
+            self.logger.experiment.add_audio(
+                "val/audio_target",
+                audio_target[0],
+                self.global_step,
+                sample_rate=HIFIGAN_SR,
+            )
+
+            self.logger.experiment.add_audio(
+                "val/audio_hat",
+                audio_hat[0],
+                self.global_step,
+                sample_rate=HIFIGAN_SR,
             )
 
         loss_re = torch.mean(torch.stack(

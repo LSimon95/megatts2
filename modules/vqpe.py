@@ -24,6 +24,7 @@ class VQProsodyEncoder(nn.Module):
             activation: str = 'ReLU',
             ):
         super(VQProsodyEncoder, self).__init__()
+        self.stride = stride
 
         self.convnet = ConvNetDouble(
             in_channels=mel_bins,
@@ -31,7 +32,7 @@ class VQProsodyEncoder(nn.Module):
             hidden_size=hidden_size,
             n_stack=n_stack,
             n_block=n_block,
-            middle_layer=nn.MaxPool1d(stride),
+            middle_layer=nn.MaxPool1d(stride, ceil_mode=True),
             kernel_size=kernel_size,
             activation=activation,
         )
@@ -47,17 +48,19 @@ class VQProsodyEncoder(nn.Module):
             self, 
             mel: torch.Tensor, # (B, T, mel_bins)
             ):
-        
+        mel_len = mel.size(1)
         mel = rearrange(mel, "B T D -> B D T")
         ze = self.convnet(mel)
         zq, _, commit_loss = self.vq(ze)
         vq_loss = F.mse_loss(ze.detach(), zq)
-        zq = rearrange(zq, "B D T -> B T D")
+        zq = rearrange(zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, self.stride, -1)
+        zq = rearrange(zq, "B T S D -> B (T S) D")[:, :mel_len, :]
         return zq, commit_loss, vq_loss
 
 def test():
     model = VQProsodyEncoder()
     mel = torch.randn(2, 303, 80)
     zq, commit_loss, vq_loss = model(mel)
+
     print(zq.shape, commit_loss.shape, vq_loss.shape)
 
