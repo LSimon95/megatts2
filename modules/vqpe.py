@@ -17,8 +17,9 @@ class VQProsodyEncoder(nn.Module):
             stride:int = 8,
             hidden_size: int = 384,
             kernel_size: int = 5,
-            n_stack: int = 3,
-            n_block: int = 2,
+            n_layers: int = 3,
+            n_stacks: int = 5,
+            n_blocks: int = 2,
             vq_bins: int = 1024,
             vq_dim: int = 256,
             activation: str = 'ReLU',
@@ -30,8 +31,9 @@ class VQProsodyEncoder(nn.Module):
             in_channels=mel_bins,
             out_channels=vq_dim,
             hidden_size=hidden_size,
-            n_stack=n_stack,
-            n_block=n_block,
+            n_layers=n_layers,
+            n_stacks=n_stacks,
+            n_blocks=n_blocks,
             middle_layer=nn.MaxPool1d(stride, ceil_mode=True),
             kernel_size=kernel_size,
             activation=activation,
@@ -51,11 +53,11 @@ class VQProsodyEncoder(nn.Module):
         mel_len = mel.size(1)
         mel = rearrange(mel, "B T D -> B D T")
         ze = self.convnet(mel)
-        zq, _, commit_loss = self.vq(ze)
+        zq, codes, commit_loss = self.vq(ze)
         vq_loss = F.mse_loss(ze.detach(), zq)
         zq = rearrange(zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, self.stride, -1)
         zq = rearrange(zq, "B T S D -> B (T S) D")[:, :mel_len, :]
-        return zq, commit_loss, vq_loss
+        return zq, commit_loss, vq_loss, codes
 
 def test():
     model = VQProsodyEncoder()

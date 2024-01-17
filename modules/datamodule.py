@@ -1,19 +1,14 @@
 import lightning.pytorch as pl
 
-import glob
 import random
-
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from lhotse import CutSet, load_manifest
 from lhotse.dataset.collation import collate_features
-from lhotse.dataset import DynamicBucketingSampler
+from lhotse.dataset import DynamicBucketingSampler, SimpleCutSampler
 from lhotse.dataset.input_strategies import (
     _get_executor
 )
-from lhotse.utils import compute_num_frames
-import h5py
 
 import torch
 import torch.nn.functional as F
@@ -23,9 +18,7 @@ from typing import Dict, Tuple, List, Type
 
 from utils.symbol_table import SymbolTable
 
-from math import isclose
-
-import numpy as np
+from tqdm.auto import tqdm
 
 class TokensCollector():
     def __init__(self, symbols_table: str) -> None:
@@ -128,10 +121,10 @@ class TTSDataset(torch.utils.data.Dataset):
 
 def make_spk_cutset(cuts: CutSet) -> Dict[str, CutSet]:
     spk2cuts = {}
-    for cut in cuts:
+    for cut in tqdm(cuts, desc="Making spk2cuts"):
         spk = cut.supervisions[0].speaker
         if spk not in spk2cuts:
-            spk2cuts[spk] = cuts.filter(lambda c: c.supervisions[0].speaker == spk)
+            spk2cuts[spk] = cuts.filter(lambda c: c.supervisions[0].speaker == spk).to_eager()
 
     return spk2cuts
 

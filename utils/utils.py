@@ -6,6 +6,8 @@ from matplotlib import pyplot as plt
 
 import numpy as np
 
+from typing import Any, Dict, Tuple, Union
+
 
 def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
     assert lengths.ndim == 1, lengths.ndim
@@ -69,3 +71,21 @@ def plot_spectrogram_to_numpy(spec_target: np.ndarray, spec_output: np.ndarray) 
     data = save_figure_to_numpy(fig)
     plt.close()
     return data
+
+def instantiate_class(args: Union[Any, Tuple[Any, ...]], init: Dict[str, Any]) -> Any:
+    """Instantiates a class with the given args and init.
+
+    Args:
+        args: Positional arguments required for instantiation.
+        init: Dict of the form {"class_path":...,"init_args":...}.
+
+    Returns:
+        The instantiated class object.
+    """
+    kwargs = init.get("init_args", {})
+    if not isinstance(args, tuple):
+        args = (args,)
+    class_module, class_name = init["class_path"].rsplit(".", 1)
+    module = __import__(class_module, fromlist=[class_name])
+    args_class = getattr(module, class_name)
+    return args_class(*args, **kwargs)

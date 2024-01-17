@@ -9,7 +9,7 @@ import transformers
 import numpy as np
 import math
 
-from .megatts2 import MegaVQ
+from .megatts2 import MegaG
 from modules.dscrm import Discriminator
 from modules.tokenizer import HIFIGAN_SR
 
@@ -20,7 +20,7 @@ from speechbrain.pretrained import HIFIGAN
 class MegaGANTrainer(pl.LightningModule):
     def __init__(
             self,
-            G: MegaVQ,
+            G: MegaG,
             D: Discriminator,
             initial_learning_rate: float,
             warmup_steps: float = 200,

@@ -32,11 +32,11 @@ class ConvBlock(nn.Module):
 
 
 class ConvStack(nn.Module):
-    def __init__(self, hidden_size, n_block, kernel_size, activation):
+    def __init__(self, hidden_size, n_blocks, kernel_size, activation):
         super(ConvStack, self).__init__()
 
         blocks = []
-        for i in range(n_block):
+        for i in range(n_blocks):
             blocks += [
                 ConvBlock(
                     hidden_size=hidden_size,
@@ -50,16 +50,16 @@ class ConvStack(nn.Module):
         return self.blocks(x)
 
 class ResidualBlockStack(nn.Module):
-    def __init__(self, hidden_size, n_stack, n_block, kernel_size, activation):
+    def __init__(self, hidden_size, n_stacks, n_blocks, kernel_size, activation):
         super(ResidualBlockStack, self).__init__()
 
         self.conv_stacks = []
 
-        for i in range(n_stack):
+        for i in range(n_stacks):
             self.conv_stacks += [
                 ConvStack(
                     hidden_size=hidden_size,
-                    n_block=n_block,
+                    n_blocks=n_blocks,
                     kernel_size=kernel_size,
                     activation=activation,
                 )
@@ -77,15 +77,15 @@ class ConvNet(nn.Module):
         in_channels: int,
         out_channels: int,
         hidden_size: int,
-        n_stack: int,
-        n_block: int,
+        n_stacks: int,
+        n_blocks: int,
         kernel_size: int,
         activation: str,
         last_layer_avg_pooling: bool = False,
     ):
         super(ConvNet, self).__init__()
 
-        self.first_layer = first_conv = nn.Conv1d(
+        self.first_layer = nn.Conv1d(
             in_channels=in_channels,
             out_channels=hidden_size,
             kernel_size=kernel_size,
@@ -95,8 +95,8 @@ class ConvNet(nn.Module):
 
         self.conv_stack = ResidualBlockStack(
             hidden_size=hidden_size,
-            n_stack=n_stack,
-            n_block=n_block,
+            n_stacks=n_stacks,
+            n_blocks=n_blocks,
             kernel_size=kernel_size,
             activation=activation,
         )
@@ -118,6 +118,40 @@ class ConvNet(nn.Module):
         x = self.last_layer(x)
         return x
 
+class ConvNetDoubleLayer(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        n_stacks: int,
+        n_blocks: int,
+        middle_layer: nn.Module,
+        kernel_size: int,
+        activation: str,
+    ):
+        super(ConvNetDoubleLayer, self).__init__()
+        self.conv_stack1 = ResidualBlockStack(
+            hidden_size=hidden_size,
+            n_stacks=n_stacks,
+            n_blocks=n_blocks,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
+
+        self.middle_layer = middle_layer
+
+        self.conv_stack2 = ResidualBlockStack(
+            hidden_size=hidden_size,
+            n_stacks=n_stacks,
+            n_blocks=n_blocks,
+            kernel_size=kernel_size,
+            activation=activation,
+        )
+
+    def forward(self, x):
+        x = self.conv_stack1(x)
+        x = self.middle_layer(x)
+        x = self.conv_stack2(x)
+        return x
 
 class ConvNetDouble(nn.Module):
     def __init__(
@@ -125,8 +159,9 @@ class ConvNetDouble(nn.Module):
         in_channels: int,
         out_channels: int,
         hidden_size: int,
-        n_stack: int,
-        n_block: int,
+        n_layers: int,
+        n_stacks: int,
+        n_blocks: int,
         middle_layer: nn.Module,
         kernel_size: int,
         activation: str,
@@ -141,23 +176,20 @@ class ConvNetDouble(nn.Module):
             padding=(kernel_size - 1) // 2,
         )
 
-        self.conv_stack1 = ResidualBlockStack(
-            hidden_size=hidden_size,
-            n_stack=n_stack,
-            n_block=n_block,
-            kernel_size=kernel_size,
-            activation=activation,
-        )
+        self.layers = []
+        for i in range(n_layers):
+            self.layers += [
+                ConvNetDoubleLayer(
+                    hidden_size=hidden_size,
+                    n_stacks=n_stacks,
+                    n_blocks=n_blocks,
+                    middle_layer=middle_layer,
+                    kernel_size=kernel_size,
+                    activation=activation,
+                )
+            ]
 
-        self.middle_layer = middle_layer
-
-        self.conv_stack2 = ResidualBlockStack(
-            hidden_size=hidden_size,
-            n_stack=n_stack,
-            n_block=n_block,
-            kernel_size=kernel_size,
-            activation=activation,
-        )
+        self.layers = nn.Sequential(*self.layers)
 
         self.last_layer = nn.Conv1d(
             in_channels=hidden_size,
@@ -169,19 +201,22 @@ class ConvNetDouble(nn.Module):
 
     def forward(self, x):
         x = self.first_layer(x)
-        x = self.conv_stack1(x)
-        x = self.middle_layer(x)
-        x = self.conv_stack2(x)
-        x = self.last_layer(x)
+
+        x_out = self.layers[0](x)
+        for layer in self.layers[1:]:
+                x_out = x_out + layer(x)
+
+        x = self.last_layer(x_out)
         return x
 
 def test():
     x = torch.rand(2, 128, 240)
     convnet = ConvNet(
         in_channels=128,
+        out_channels=128,
         hidden_size=128,
-        n_stack=2,
-        n_block=2,
+        n_stacks=2,
+        n_blocks=2,
         kernel_size=3,
         activation="ReLU",
     )
@@ -190,9 +225,11 @@ def test():
 
     convnet = ConvNetDouble(
         in_channels=128,
+        out_channels=128,
         hidden_size=128,
-        n_stack=2,
-        n_block=2,
+        n_layers=2,
+        n_stacks=2,
+        n_blocks=2,
         middle_layer=nn.MaxPool1d(
             kernel_size=8,
             stride=8,
