@@ -26,6 +26,7 @@ class VQProsodyEncoder(nn.Module):
             ):
         super(VQProsodyEncoder, self).__init__()
         self.stride = stride
+        self.mel_bins = mel_bins
 
         self.convnet = ConvNetDouble(
             in_channels=mel_bins,
@@ -51,6 +52,7 @@ class VQProsodyEncoder(nn.Module):
             mel: torch.Tensor, # (B, T, mel_bins)
             ):
         mel_len = mel.size(1)
+        mel = mel[..., :self.mel_bins]
         mel = rearrange(mel, "B T D -> B D T")
         ze = self.convnet(mel)
         zq, codes, commit_loss = self.vq(ze)

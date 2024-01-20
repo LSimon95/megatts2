@@ -59,7 +59,7 @@ model:
       vqpe:
         class_path: modules.vqpe.VQProsodyEncoder
         init_args:
-          mel_bins: 80
+          mel_bins: 20
           stride: 8
           hidden_size: 384
           kernel_size: 5
@@ -103,4 +103,4 @@ data:
   num_buckets: 10
   num_workers: 4
   class_path: modules.datamodule.TTSDataModule
-ckpt_path: last.ckpt
+ckpt_path: null

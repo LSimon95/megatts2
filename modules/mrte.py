@@ -42,7 +42,7 @@ class LengthRegulator(nn.Module):
     def forward(
         self,
         x: torch.Tensor,  # (B, T, D)
-        duration_tokens: torch.Tensor,  # (B, T) int for duration, unit is 10ms
+        duration_tokens: torch.Tensor,  # (B, T) int for duration
         mel_max_length=None
     ):
 
@@ -101,9 +101,9 @@ class MRTE(nn.Module):
         self.mel_encoder_middle_layer = nn.Conv1d(
             in_channels=hidden_size,
             out_channels=hidden_size,
-            kernel_size=mel_kernel_size,
+            kernel_size=mel_stride + 1,
             stride=mel_stride,
-            padding=(mel_kernel_size - 1) // 2,
+            padding=(mel_stride) // 2,
         )
         self.mel_encoder = ConvNetDouble(
             in_channels=mel_bins,
