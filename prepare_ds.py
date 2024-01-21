@@ -235,7 +235,7 @@ class DatasetMaker:
         for spk in spk_cs.keys():
             os.system(f'mkdir -p {self.args.ds_path}/latents/{spk}')
 
-        ttsds = TTSDataset(spk_cs, f'{dm.args.ds_path}/unique_text_tokens.k2symbols', 10)
+        ttsds = TTSDataset(spk_cs, f'{dm.args.ds_path}', 10)
 
         for c in tqdm(cs_all):
             id = c.recording_id

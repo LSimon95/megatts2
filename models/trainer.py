@@ -9,13 +9,15 @@ import transformers
 import numpy as np
 import math
 
-from .megatts2 import MegaG
+from .megatts2 import MegaG, MegaPLM
 from modules.dscrm import Discriminator
 from modules.tokenizer import HIFIGAN_SR
 
 from utils.utils import plot_spectrogram_to_numpy
 
 from speechbrain.pretrained import HIFIGAN
+
+from torchmetrics.classification import MulticlassAccuracy
 
 class MegaGANTrainer(pl.LightningModule):
     def __init__(
@@ -189,5 +191,104 @@ class MegaGANTrainer(pl.LightningModule):
             [x["loss_re"] for x in outputs]))
 
         self.log("val/loss_re", loss_re, sync_dist=True)
+
+        self.validation_step_outputs = []
+
+class MegaPLMTrainer(pl.LightningModule):
+    def __init__(
+            self,
+            plm: MegaPLM,
+            initial_learning_rate: float,
+            warmup_steps: float = 200,
+            train_dtype: str = "float32",
+            **kwargs
+    ):
+        super().__init__()
+        self.save_hyperparameters(ignore=['plm'])
+        self.validation_step_outputs = []
+
+        if self.hparams.train_dtype == "float32":
+            self.train_dtype = torch.float32
+        elif self.hparams.train_dtype == "bfloat16":
+            self.train_dtype = torch.bfloat16
+            print("Using bfloat16")
+
+        self.plm = plm
+
+        self.accuracy_metric = MulticlassAccuracy(
+            1024,
+            top_k=10,
+            average="micro",
+            multidim_average="global",
+            ignore_index=1024 + 1
+        )
+
+    def configure_optimizers(self):
+        plm_params = [
+            {"params": self.plm.parameters()}
+        ]
+
+        plm_opt = torch.optim.AdamW(
+            plm_params, lr=self.hparams.initial_learning_rate)
+
+        plm_sch = transformers.get_cosine_schedule_with_warmup(
+            plm_opt, num_warmup_steps=self.hparams.warmup_steps, num_training_steps=self.trainer.max_steps
+        )
+
+        return (
+            [plm_opt],
+            [{"scheduler": plm_sch, "interval": "step"}],
+        )
+    
+    def forward(self, batch: dict):
+        logits, y = self.plm(
+            tc_latent=batch["tc_latents"],
+            p_codes=batch["p_codes"],
+            lens=batch["lens"]
+        )
+
+        logits = logits.transpose(1, 2)
+
+        # ignore padding
+        loss = F.cross_entropy(logits, y, reduction="sum", ignore_index=1024 + 1)
+        loss_log = loss / y.shape[0] / y.shape[1]
+        ac10 = self.accuracy_metric(logits.detach(), y)
+
+        return loss, loss_log, ac10
+    
+    def training_step(self, batch: dict, batch_idx, **kwargs):
+        with torch.cuda.amp.autocast(dtype=self.train_dtype):
+            self.plm.train()
+            loss, loss_log, ac10 = self(batch)
+
+        if batch_idx % 5 == 0:
+            self.log("train/acc10", ac10, prog_bar=True)
+            self.log("train/loss", loss_log, prog_bar=True)
+
+        return loss
+    
+    def on_validation_epoch_start(self):
+        pass
+
+    def validation_step(self, batch: torch.Tensor, **kwargs):
+        with torch.no_grad():
+            self.plm.eval()
+            _, loss_log, ac10 = self(batch)
+
+        self.validation_step_outputs.append({
+            "loss_log": loss_log,
+            "ac10": ac10
+        })
+
+    def on_validation_epoch_end(self):
+        outputs = self.validation_step_outputs
+        if self.global_rank == 0:
+            loss_log = torch.mean(torch.stack(
+                [x["loss_log"] for x in outputs]))
+            ac10 = torch.mean(torch.stack(
+                [x["ac10"] for x in outputs]))
+
+            self.log("val/loss", loss_log, sync_dist=True)
+            self.log("val/acc10", ac10, sync_dist=True)
 
         self.validation_step_outputs = []

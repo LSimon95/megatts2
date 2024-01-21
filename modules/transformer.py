@@ -119,10 +119,10 @@ class TransformerEncoder(nn.Module):
         self,
         x: torch.Tensor,
         x_lens: torch.Tensor,
+        causal: bool = False
     ) -> torch.Tensor:
 
-        mask = make_attn_mask(x_lens, self.layers[0].n_heads)
-
+        mask = make_attn_mask(x_lens, self.layers[0].n_heads, causal=causal)
         for layer in self.layers:
             x = layer(x, mask=mask)
         if self.norm is not None:

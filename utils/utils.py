@@ -15,17 +15,28 @@ def make_pad_mask(lengths: torch.Tensor, max_len: int = 0) -> torch.Tensor:
     n = lengths.size(0)
     seq_range = torch.arange(0, max_len, device=lengths.device)
     expaned_lengths = seq_range.unsqueeze(0).expand(n, max_len)
-    return expaned_lengths < lengths.unsqueeze(-1)
+    return expaned_lengths >= lengths.unsqueeze(-1)
 
 
-def make_attn_mask(lengths: torch.Tensor, num_heads: int) -> torch.Tensor:
+def make_attn_mask(lengths: torch.Tensor, num_heads: int, causal: False) -> torch.Tensor:
 
     key_padding_mask = make_pad_mask(lengths)
 
     bsz = key_padding_mask.size(0)
     seq_len = key_padding_mask.size(1)
 
-    return key_padding_mask.view(bsz, 1, 1, seq_len).expand(-1, num_heads, -1, -1)
+    key_padding_mask = key_padding_mask.view(bsz, 1, 1, seq_len).expand(-1, num_heads, -1, -1)
+
+    if causal:
+        assert seq_len == lengths.max(), "Causal mask requires all lengths to be equal to max_len"
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool, device=key_padding_mask.device), diagonal=1)
+        causal_mask = causal_mask.view(1, 1, seq_len, seq_len).expand(bsz, num_heads, -1, -1)
+        causal_mask = causal_mask.logical_or(key_padding_mask)
+        return causal_mask.float().masked_fill(causal_mask, float("-inf"))
+    else:
+        key_padding_mask_float = key_padding_mask.float()
+        key_padding_mask_float = key_padding_mask_float.masked_fill(key_padding_mask, float("-inf"))
+        return key_padding_mask_float
 
 def save_figure_to_numpy(fig: plt.Figure) -> np.ndarray:
     """
@@ -89,3 +100,12 @@ def instantiate_class(args: Union[Any, Tuple[Any, ...]], init: Dict[str, Any]) -
     module = __import__(class_module, fromlist=[class_name])
     args_class = getattr(module, class_name)
     return args_class(*args, **kwargs)
+
+
+if __name__ == "__main__":
+    lengths = torch.tensor([3, 5])
+
+    b = torch.ones(3, 5, 5)
+    m = make_attn_mask(lengths, 1, True)
+    print(m)
+    print(b + m)

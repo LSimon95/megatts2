@@ -107,37 +107,46 @@ class MegaPLM(nn.Module):
     def __init__(
             self,
             n_layers: int = 12,
-            n_heads: int = 6,
-            d_model: int = 1026,
+            n_heads: int = 16,
             hidden_size: int = 1024,
-            ff_dim: int = 1024,
-            vq_bins: int = 1024
+            vq_dim: int = 256,
+            tc_latent_dim: int = 512,
+            vq_bins: int = 1024,
+            dropout: float = 0.1,
     ):
         super(MegaPLM, self).__init__()
-
+        d_model = vq_dim + tc_latent_dim
         self.plm = TransformerEncoder(
             TransformerEncoderLayer(
                 dim=d_model,
-                ff_dim=ff_dim,
-                conv_ff=False,
+                ff_dim=hidden_size,
                 n_heads=n_heads,
+                dropout=dropout,
+                conv_ff=True,
             ),
             num_layers=n_layers,
         )
 
-        self.predict_layer = nn.Linear(d_model, hidden_size)
+        self.predict_layer = nn.Linear(d_model, vq_bins, bias=False)
 
-        self.pos = SinePositionalEmbedding(hidden_size)
-        self.pc_embedding = nn.Embedding(vq_bins + 2, hidden_size)
-
-        self.max_pool = nn.MaxPool1d(2)
+        self.pos = SinePositionalEmbedding(d_model)
+        self.pc_embedding = nn.Embedding(vq_bins + 2, vq_dim)
 
     def forward(
             self,
-
             tc_latent: torch.Tensor,  # (B, T, D)
-            x_lens: torch.Tensor,  # (B,)
+            p_codes: torch.Tensor,  # (B, T)
+            lens: torch.Tensor,  # (B,)
     ):
-        x = self.plm(x, x_lens)
-        x = self.predict_layer(x)
-        return x
+        pc_emb = self.pc_embedding(p_codes[:, :-1])
+        x_emb = torch.cat([tc_latent, pc_emb], dim=-1)
+        x_pos = self.pos(x_emb)
+
+        x = self.plm(x_pos, lens, causal=True)
+        logits = self.predict_layer(x)
+
+        target = p_codes[:, 1:]
+
+        print(torch.argmax(F.softmax(logits, dim=-1))[0])
+
+        return logits, target

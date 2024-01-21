@@ -204,9 +204,10 @@ class MegaPLMDataset(torch.utils.data.Dataset):
                     [p_code_spk_cat[0, 0, :], p_code_spk], dim=0)
 
                 assert tc_latent_spk.shape[0] == p_code_spk.shape[0]
+                assert torch.max(p_code_spk) < 1024
 
             p_code_spk = torch.cat([self.bos, p_code_spk], dim=0)
-            lens.append(p_code_spk.shape[0])
+            lens.append(p_code_spk.shape[0] - 1)
 
             p_code_spks.append(p_code_spk)
             tc_latent_spks.append(tc_latent_spk)
@@ -219,7 +220,7 @@ class MegaPLMDataset(torch.utils.data.Dataset):
 
         for i in range(len(p_code_spks)):
             p_code_spks_padded.append(F.pad(
-                p_code_spks[i], (0, max_len - lens[i]), mode='constant', value=0))
+                p_code_spks[i], (0, max_len - lens[i]), mode='constant', value=self.eos.item()))
             tc_latent_spks_padded.append(F.pad(
                 tc_latent_spks[i], (0, 0, 0, max_len - lens[i]), mode='constant', value=0))
 
@@ -228,8 +229,8 @@ class MegaPLMDataset(torch.utils.data.Dataset):
         lens = torch.Tensor(lens).to(dtype=torch.int32)
 
         batch = {
-            "p_code_spks": p_code_spks,
-            "tc_latent_spks": tc_latent_spks,
+            "p_codes": p_code_spks,
+            "tc_latents": tc_latent_spks,
             "lens": lens,
         }
 
@@ -276,7 +277,7 @@ class TTSDataModule(pl.LightningDataModule):
 
         spk2cuts = make_spk_cutset(cs_train)
 
-        if dataset == 'TTSDataset':
+        if self.hparams.dataset == 'TTSDataset':
             dataset = TTSDataset(spk2cuts, self.hparams.ds_path, 10)
 
             sampler = DynamicBucketingSampler(
@@ -287,9 +288,9 @@ class TTSDataModule(pl.LightningDataModule):
                 drop_last=True,
                 seed=seed,
             )
-        elif dataset == 'MegaPLMDataset':
+        elif self.hparams.dataset == 'MegaPLMDataset':
             lr = LengthRegulator(
-                240, 16000, (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000))
+                HIFIGAN_HOP_LENGTH, 16000, (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000))
             dataset = MegaPLMDataset(
                 spk2cuts, self.hparams.ds_path, lr, 10, 1024)
 
@@ -301,7 +302,7 @@ class TTSDataModule(pl.LightningDataModule):
                 seed=seed,
             )
         else:
-            raise ValueError(f'Unsupported dataset: {dataset}')
+            raise ValueError(f'Unsupported dataset: {self.hparams.dataset}')
 
         self.train_dl = DataLoader(
             dataset,
@@ -316,7 +317,7 @@ class TTSDataModule(pl.LightningDataModule):
 
         spk2cuts = make_spk_cutset(cs_valid)
 
-        if dataset == 'TTSDataset':
+        if self.hparams.dataset == 'TTSDataset':
             sampler = DynamicBucketingSampler(
                 cs_valid,
                 max_duration=self.hparams.max_duration_batch,
@@ -325,7 +326,7 @@ class TTSDataModule(pl.LightningDataModule):
                 drop_last=True,
                 seed=seed,
             )
-        elif dataset == 'MegaPLMDataset':
+        elif self.hparams.dataset == 'MegaPLMDataset':
             sampler = SimpleCutSampler(
                 cs_valid,
                 max_cuts=self.hparams.max_n_cuts,
@@ -334,7 +335,7 @@ class TTSDataModule(pl.LightningDataModule):
                 seed=seed,
             )
         else:
-            raise ValueError(f'Unsupported dataset: {dataset}')
+            raise ValueError(f'Unsupported dataset: {self.hparams.dataset}')
 
         self.valid_dl = DataLoader(
             dataset,
@@ -398,6 +399,6 @@ def test():
     )
 
     for batch in valid_dl:
-        print(batch['p_code_spks'].shape)
-        print(batch['tc_latent_spks'].shape)
+        print(batch['p_codes'].shape)
+        print(batch['tc_latents'].shape)
         print(batch['lens'].shape)
