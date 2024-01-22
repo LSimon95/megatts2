@@ -1,13 +1,13 @@
 # main.py
 from lightning.pytorch.cli import LightningCLI
 
-from models.trainer import MegaGANTrainer, MegaPLMTrainer
-from modules.datamodule import TTSDataModule
+from models.trainer import MegaGANTrainer, MegaPLMTrainer, MegaADMTrainer
+from modules.datamodule import TTSDataModule, test
 
 
 
 def cli_main():
-    cli = LightningCLI(MegaPLMTrainer, TTSDataModule)
+    cli = LightningCLI(MegaADMTrainer, TTSDataModule)
 
 if __name__ == "__main__":
     cli_main()

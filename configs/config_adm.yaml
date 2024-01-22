@@ -1,0 +1,59 @@
+# lightning.pytorch==2.1.0
+seed_everything: true
+trainer:
+  logger:
+    class_path: lightning.pytorch.loggers.tensorboard.TensorBoardLogger
+    init_args:
+      save_dir: logs/
+  callbacks:
+    - class_path: lightning.pytorch.callbacks.ModelSummary
+      init_args:
+        max_depth: 3
+    - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+      init_args:
+        monitor: val/loss
+        filename: nikatts_ar_checkpoint_{epoch}_{step}_{val/loss:.4f}
+        save_top_k: 5
+        save_last: true
+        every_n_epochs: 1
+    - class_path: lightning.pytorch.callbacks.LearningRateMonitor
+      init_args:
+        logging_interval: step
+  max_steps: 50000
+  # # You might want to limit val batches when evaluating all the metrics, as they are time-consuming
+  # limit_val_batches: 100
+  accelerator: gpu
+  log_every_n_steps: 100
+  val_check_interval: 5000
+  check_val_every_n_epoch: 1
+
+  # strategy: ddp
+  # devices: [0, 1]
+  # use_distributed_sampler: false
+
+  devices: [0]
+model:
+  adm:
+    class_path: models.megatts2.MegaADM
+    init_args:
+      n_layers: 8
+      n_heads: 8
+      emb_dim: 256
+      tc_latent_dim: 512
+      tc_emb_dim: 512
+      dropout: 0.1
+      max_duration_token: 256
+  initial_learning_rate: 2e-5
+  warmup_steps: 200.0
+  train_dtype: bfloat16
+  class_path: models.trainer.MegaPLMTrainer
+data:
+  ds_path: /root/autodl-tmp/megatts2/data/ds/
+  dataset: MegaADMDataset
+  max_duration_batch: 400
+  min_duration: 2.1
+  max_duration: 20
+  num_buckets: 10
+  num_workers: 4
+  class_path: modules.datamodule.TTSDataModule
+ckpt_path: null

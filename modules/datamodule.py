@@ -237,6 +237,56 @@ class MegaPLMDataset(torch.utils.data.Dataset):
         return batch
 
 
+class MegaADMDataset(torch.utils.data.Dataset):
+    def __init__(self, ds_path: str):
+        self.tokens_collector = TokensCollector(
+            f'{ds_path}/unique_text_tokens.k2symbols')
+        self.ds_path = ds_path
+        self.max_duration_token = 0
+
+    def __getitem__(self, cuts_sample: CutSet) -> Dict:
+        duration_token_list = []
+        tc_latent_list =[]
+        lens = []
+        for cut in cuts_sample:
+            spk = cut.supervisions[0].speaker
+            id = cut.recording_id
+            duration_tokens = torch.Tensor(
+                cut.supervisions[0].custom['duration_tokens']).to(dtype=torch.int32)
+            
+            latents = np.load(f'{self.ds_path}/latents/{spk}/{id}.npy',
+                          allow_pickle=True).item()
+            tc_latent = torch.from_numpy(latents['tc_latent'])[0]
+            assert tc_latent.shape[0] == duration_tokens.shape[0]
+
+            duration_token_list.append(duration_tokens)
+            tc_latent_list.append(tc_latent)
+            lens.append(duration_tokens.shape[0])
+
+        max_len = max(lens)
+
+        # pad
+        duration_token_list_padded = []
+        tc_latent_list_padded = []
+        for i in range(len(duration_token_list)):
+            duration_token_list_padded.append(F.pad(
+                duration_token_list[i], (1, max_len - lens[i]), mode='constant', value=0))
+            tc_latent_list_padded.append(F.pad(
+                tc_latent_list[i], (0, 0, 0, max_len - lens[i]), mode='constant', value=0))
+            
+        duration_tokens = torch.stack(duration_token_list_padded).type(torch.float32).unsqueeze(-1)
+        tc_latents = torch.stack(tc_latent_list_padded).type(torch.float32)
+        lens = torch.Tensor(lens).to(dtype=torch.int32)
+
+        batch = {
+            "duration_tokens": duration_tokens,
+            "tc_latents": tc_latents,
+            "lens": lens,
+        }
+
+        return batch
+
+
 def make_spk_cutset(cuts: CutSet) -> Dict[str, CutSet]:
     spk2cuts = {}
     for cut in tqdm(cuts, desc="Making spk2cuts"):
@@ -275,10 +325,14 @@ class TTSDataModule(pl.LightningDataModule):
         cs_train = load_manifest(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
         cs_train = cs_train.filter(filter_duration)
 
-        spk2cuts = make_spk_cutset(cs_train)
+        if not self.hparams.dataset == 'MegaADMDataset':
+            spk2cuts = make_spk_cutset(cs_train)
 
-        if self.hparams.dataset == 'TTSDataset':
-            dataset = TTSDataset(spk2cuts, self.hparams.ds_path, 10)
+        if self.hparams.dataset == 'TTSDataset' or self.hparams.dataset == 'MegaADMDataset':
+            if self.hparams.dataset == 'TTSDataset':
+                dataset = TTSDataset(spk2cuts, self.hparams.ds_path, 10)
+            else:
+                dataset = MegaADMDataset(self.hparams.ds_path)
 
             sampler = DynamicBucketingSampler(
                 cs_train,
@@ -315,9 +369,10 @@ class TTSDataModule(pl.LightningDataModule):
         cs_valid = load_manifest(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
         cs_valid = cs_valid.filter(filter_duration)
 
-        spk2cuts = make_spk_cutset(cs_valid)
+        if not self.hparams.dataset == 'MegaADMDataset':
+            spk2cuts = make_spk_cutset(cs_valid)
 
-        if self.hparams.dataset == 'TTSDataset':
+        if self.hparams.dataset == 'TTSDataset' or self.hparams.dataset == 'MegaADMDataset':
             sampler = DynamicBucketingSampler(
                 cs_valid,
                 max_duration=self.hparams.max_duration_batch,
@@ -398,7 +453,28 @@ def test():
         ),
     )
 
+    # for batch in valid_dl:
+    #     print(batch['p_codes'].shape)
+    #     print(batch['tc_latents'].shape)
+    #     print(batch['lens'].shape)
+
+    cs = cs_valid + load_manifest("data/ds/cuts_train.jsonl.gz")
+
+    valid_dl = DataLoader(
+        MegaADMDataset('data/ds'),
+        batch_size=None,
+        num_workers=0,
+        sampler=DynamicBucketingSampler(
+            cs,
+            max_duration=20,
+            shuffle=True,
+            num_buckets=5,
+            drop_last=False,
+            seed=20000
+        ),
+    )
+
     for batch in valid_dl:
-        print(batch['p_codes'].shape)
+        print(batch['duration_tokens'].shape)
         print(batch['tc_latents'].shape)
         print(batch['lens'].shape)

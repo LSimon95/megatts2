@@ -128,7 +128,7 @@ class MegaPLM(nn.Module):
 
         self.predict_layer = nn.Linear(d_model, vq_bins, bias=False)
 
-        self.pos = SinePositionalEmbedding(d_model)
+        self.pos_emb = SinePositionalEmbedding(d_model)
         self.pc_embedding = nn.Embedding(vq_bins + 2, vq_dim)
 
     def forward(
@@ -139,7 +139,7 @@ class MegaPLM(nn.Module):
     ):
         pc_emb = self.pc_embedding(p_codes[:, :-1])
         x_emb = torch.cat([tc_latent, pc_emb], dim=-1)
-        x_pos = self.pos(x_emb)
+        x_pos = self.pos_emb(x_emb)
 
         x = self.plm(x_pos, lens, causal=True)
         logits = self.predict_layer(x)
@@ -147,3 +147,60 @@ class MegaPLM(nn.Module):
         target = p_codes[:, 1:]
 
         return logits, target
+
+class MegaADM(nn.Module):
+    def __init__(
+            self,
+            n_layers: int = 8,
+            n_heads: int = 8,
+            emb_dim: int = 256,
+            tc_latent_dim: int = 512,
+            tc_emb_dim: int = 256,
+            dropout: float = 0.1,
+            max_duration_token: int = 256,
+    ):
+        super(MegaADM, self).__init__()
+
+
+        d_model = emb_dim + tc_emb_dim
+        self.adm = TransformerEncoder(
+            TransformerEncoderLayer(
+                dim=d_model,
+                ff_dim=emb_dim * 4,
+                n_heads=n_heads,
+                dropout=dropout,
+                conv_ff=False,
+            ),
+            num_layers=n_layers,
+        )
+
+        self.dt_linear_emb = nn.Linear(1, emb_dim, bias=False)
+        self.tc_linear_emb = nn.Linear(tc_latent_dim, tc_emb_dim, bias=False)
+        self.pos_emb = SinePositionalEmbedding(d_model)
+        self.predict_layer = nn.Linear(d_model, 1, bias=False)
+
+        self.max_duration_token = max_duration_token
+
+    def forward(
+            self,
+            tc_latents: torch.Tensor,  # (B, T, D)
+            duration_tokens: torch.Tensor,  # (B, T)
+            lens: torch.Tensor,  # (B,)
+    ):
+        dt_emb = self.dt_linear_emb(duration_tokens[:, :-1])
+        tc_emb = self.tc_linear_emb(tc_latents)
+        x_emb = torch.cat([tc_emb, dt_emb], dim=-1)
+        x_pos = self.pos_emb(x_emb)
+
+        x = self.adm(x_pos, lens, causal=True)
+        duration_tokens_predict = self.predict_layer(x)[..., 0]
+
+        target = duration_tokens[:, 1:, 0]
+
+        # fill padding with 0
+        max_len = duration_tokens.size(1) - 1
+        seq_range = torch.arange(0, max_len, device=duration_tokens_predict.device)
+        expaned_lengths = seq_range.unsqueeze(0).expand(lens.size(0), max_len)
+        mask = expaned_lengths >= lens.unsqueeze(-1)
+        duration_tokens_predict = duration_tokens_predict.masked_fill(mask, 0)
+        return duration_tokens_predict, target
