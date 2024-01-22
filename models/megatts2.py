@@ -108,8 +108,7 @@ class MegaPLM(nn.Module):
             self,
             n_layers: int = 12,
             n_heads: int = 16,
-            hidden_size: int = 1024,
-            vq_dim: int = 256,
+            vq_dim: int = 512,
             tc_latent_dim: int = 512,
             vq_bins: int = 1024,
             dropout: float = 0.1,
@@ -119,10 +118,10 @@ class MegaPLM(nn.Module):
         self.plm = TransformerEncoder(
             TransformerEncoderLayer(
                 dim=d_model,
-                ff_dim=hidden_size,
+                ff_dim=d_model * 4,
                 n_heads=n_heads,
                 dropout=dropout,
-                conv_ff=True,
+                conv_ff=False,
             ),
             num_layers=n_layers,
         )
@@ -146,7 +145,5 @@ class MegaPLM(nn.Module):
         logits = self.predict_layer(x)
 
         target = p_codes[:, 1:]
-
-        print(torch.argmax(F.softmax(logits, dim=-1))[0])
 
         return logits, target

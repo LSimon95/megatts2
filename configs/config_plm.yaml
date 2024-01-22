@@ -38,8 +38,7 @@ model:
     init_args:
       n_layers: 12
       n_heads: 16
-      hidden_size: 1024
-      vq_dim: 256
+      vq_dim: 512
       tc_latent_dim: 512
       vq_bins: 1024
       dropout: 0.1

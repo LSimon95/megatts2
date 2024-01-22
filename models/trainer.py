@@ -262,7 +262,7 @@ class MegaPLMTrainer(pl.LightningModule):
             loss, loss_log, ac10 = self(batch)
 
         if batch_idx % 5 == 0:
-            self.log("train/acc10", ac10, prog_bar=True)
+            self.log("train/ac10", ac10, prog_bar=True)
             self.log("train/loss", loss_log, prog_bar=True)
 
         return loss
@@ -289,6 +289,6 @@ class MegaPLMTrainer(pl.LightningModule):
                 [x["ac10"] for x in outputs]))
 
             self.log("val/loss", loss_log, sync_dist=True)
-            self.log("val/acc10", ac10, sync_dist=True)
+            self.log("val/ac10", ac10, sync_dist=True)
 
         self.validation_step_outputs = []
