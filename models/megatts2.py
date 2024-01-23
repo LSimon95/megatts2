@@ -198,9 +198,9 @@ class MegaADM(nn.Module):
         target = duration_tokens[:, 1:, 0]
 
         # fill padding with 0
-        max_len = duration_tokens.size(1) - 1
-        seq_range = torch.arange(0, max_len, device=duration_tokens_predict.device)
-        expaned_lengths = seq_range.unsqueeze(0).expand(lens.size(0), max_len)
-        mask = expaned_lengths >= lens.unsqueeze(-1)
-        duration_tokens_predict = duration_tokens_predict.masked_fill(mask, 0)
+        # max_len = duration_tokens.size(1) - 1
+        # seq_range = torch.arange(0, max_len, device=duration_tokens_predict.device)
+        # expaned_lengths = seq_range.unsqueeze(0).expand(lens.size(0), max_len)
+        # mask = expaned_lengths >= lens.unsqueeze(-1)
+        # duration_tokens_predict = duration_tokens_predict.masked_fill(mask, 0)
         return duration_tokens_predict, target

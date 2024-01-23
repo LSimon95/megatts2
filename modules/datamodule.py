@@ -242,7 +242,7 @@ class MegaADMDataset(torch.utils.data.Dataset):
         self.tokens_collector = TokensCollector(
             f'{ds_path}/unique_text_tokens.k2symbols')
         self.ds_path = ds_path
-        self.max_duration_token = 0
+        self.max_duration_token = 128
 
     def __getitem__(self, cuts_sample: CutSet) -> Dict:
         duration_token_list = []
@@ -251,8 +251,12 @@ class MegaADMDataset(torch.utils.data.Dataset):
         for cut in cuts_sample:
             spk = cut.supervisions[0].speaker
             id = cut.recording_id
-            duration_tokens = torch.Tensor(
-                cut.supervisions[0].custom['duration_tokens']).to(dtype=torch.int32)
+            
+            duration_tokens = cut.supervisions[0].custom['duration_tokens']
+            if np.max(duration_tokens) >= self.max_duration_token:
+                continue
+
+            duration_tokens = torch.Tensor(duration_tokens).to(dtype=torch.int32)
             
             latents = np.load(f'{self.ds_path}/latents/{spk}/{id}.npy',
                           allow_pickle=True).item()
@@ -339,7 +343,7 @@ class TTSDataModule(pl.LightningDataModule):
                 max_duration=self.hparams.max_duration_batch,
                 shuffle=True,
                 num_buckets=self.hparams.num_buckets,
-                drop_last=True,
+                drop_last=False,
                 seed=seed,
             )
         elif self.hparams.dataset == 'MegaPLMDataset':
@@ -352,7 +356,7 @@ class TTSDataModule(pl.LightningDataModule):
                 cs_train,
                 max_cuts=self.hparams.max_n_cuts,
                 shuffle=True,
-                drop_last=True,
+                drop_last=False,
                 seed=seed,
             )
         else:
@@ -378,7 +382,7 @@ class TTSDataModule(pl.LightningDataModule):
                 max_duration=self.hparams.max_duration_batch,
                 shuffle=True,
                 num_buckets=self.hparams.num_buckets,
-                drop_last=True,
+                drop_last=False,
                 seed=seed,
             )
         elif self.hparams.dataset == 'MegaPLMDataset':
@@ -386,7 +390,7 @@ class TTSDataModule(pl.LightningDataModule):
                 cs_valid,
                 max_cuts=self.hparams.max_n_cuts,
                 shuffle=True,
-                drop_last=True,
+                drop_last=False,
                 seed=seed,
             )
         else:
@@ -475,6 +479,7 @@ def test():
     )
 
     for batch in valid_dl:
-        print(batch['duration_tokens'].shape)
-        print(batch['tc_latents'].shape)
-        print(batch['lens'].shape)
+        pass
+        # print(batch['duration_tokens'].shape)
+        # print(batch['tc_latents'].shape)
+        # print(batch['lens'].shape)
