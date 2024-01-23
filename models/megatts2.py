@@ -14,6 +14,14 @@ from einops import rearrange
 import yaml
 
 from utils.utils import instantiate_class
+import glob
+import soundfile as sf
+import librosa
+
+from modules.tokenizer import extract_mel_spec, TextTokenizer, HIFIGAN_SR
+from modules.datamodule import TokensCollector
+
+import numpy as np
 
 
 class MegaG(nn.Module):
@@ -71,17 +79,19 @@ class MegaG(nn.Module):
         _, _, _, codes = self.vqpe(mel_vqpe)
         x = self.mrte.tc_latent(phone, phone_lens, mel_mrte)
         return x, codes
-    
+
     @classmethod
     def from_hparams(self, config_path: str) -> "MegaG":
 
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
 
-            G_config = init=config['model']['G']
+            G_config = init = config['model']['G']
 
-            mrte = instantiate_class(args=(), init=G_config['init_args']['mrte'])
-            vqpe = instantiate_class(args=(), init=G_config['init_args']['vqpe'])
+            mrte = instantiate_class(
+                args=(), init=G_config['init_args']['mrte'])
+            vqpe = instantiate_class(
+                args=(), init=G_config['init_args']['vqpe'])
 
             G_config['init_args']['mrte'] = mrte
             G_config['init_args']['vqpe'] = vqpe
@@ -89,9 +99,9 @@ class MegaG(nn.Module):
             G = instantiate_class(args=(), init=G_config)
 
             return G
-    
+
     @classmethod
-    def from_pretrained(self, ckpt: str, config : str) -> "MegaG":
+    def from_pretrained(self, ckpt: str, config: str) -> "MegaG":
 
         G = MegaG.from_hparams(config)
 
@@ -102,6 +112,7 @@ class MegaG(nn.Module):
 
         G.load_state_dict(state_dict, strict=True)
         return G
+
 
 class MegaPLM(nn.Module):
     def __init__(
@@ -128,7 +139,7 @@ class MegaPLM(nn.Module):
 
         self.predict_layer = nn.Linear(d_model, vq_bins, bias=False)
 
-        self.pos_emb = SinePositionalEmbedding(d_model)
+        self.pos = SinePositionalEmbedding(d_model)
         self.pc_embedding = nn.Embedding(vq_bins + 2, vq_dim)
 
     def forward(
@@ -139,7 +150,7 @@ class MegaPLM(nn.Module):
     ):
         pc_emb = self.pc_embedding(p_codes[:, :-1])
         x_emb = torch.cat([tc_latent, pc_emb], dim=-1)
-        x_pos = self.pos_emb(x_emb)
+        x_pos = self.pos(x_emb)
 
         x = self.plm(x_pos, lens, causal=True)
         logits = self.predict_layer(x)
@@ -147,6 +158,24 @@ class MegaPLM(nn.Module):
         target = p_codes[:, 1:]
 
         return logits, target
+
+    @classmethod
+    def from_pretrained(cls, ckpt: str, config: str) -> "MegaPLM":
+
+        with open(config, "r") as f:
+            config = yaml.safe_load(f)
+
+            plm_config = config['model']['plm']
+            plm = instantiate_class(args=(), init=plm_config)
+
+        state_dict = {}
+        for k, v in torch.load(ckpt)['state_dict'].items():
+            if k.startswith('plm.'):
+                state_dict[k[4:]] = v
+
+        plm.load_state_dict(state_dict, strict=True)
+        return plm
+
 
 class MegaADM(nn.Module):
     def __init__(
@@ -160,7 +189,6 @@ class MegaADM(nn.Module):
             max_duration_token: int = 256,
     ):
         super(MegaADM, self).__init__()
-
 
         d_model = emb_dim + tc_emb_dim
         self.adm = TransformerEncoder(
@@ -204,3 +232,94 @@ class MegaADM(nn.Module):
         # mask = expaned_lengths >= lens.unsqueeze(-1)
         # duration_tokens_predict = duration_tokens_predict.masked_fill(mask, 0)
         return duration_tokens_predict, target
+
+    def infer(
+        self,
+        tc_latents: torch.Tensor,  # (B, T, D)
+    ):
+        T = tc_latents.shape[1]
+
+        tc_latent_ar = tc_latents[:, 0:1, :]
+        p_code = torch.Tensor([0]).to(
+            tc_latents.device).unsqueeze(0).unsqueeze(1)
+        for t in range(T):
+            dt_emb = self.dt_linear_emb(p_code)
+            tc_emb = self.tc_linear_emb(tc_latent_ar)
+
+            x_emb = torch.cat([tc_emb, dt_emb], dim=-1)
+            x_pos = self.pos_emb(x_emb)
+
+            x = self.adm(x_pos)
+            dt_predict = self.predict_layer(x)[:, -1:, :]
+            p_code = torch.cat([p_code, dt_predict], dim=1)
+            tc_latent_ar = torch.cat(
+                [tc_latent_ar, tc_latents[:, t:t+1, :]], dim=1)
+
+        return (p_code[:, 1:, :] + 0.5).to(torch.int32).clamp(1, 128)
+
+    @classmethod
+    def from_pretrained(self, ckpt: str, config: str) -> "MegaADM":
+
+        with open(config, "r") as f:
+            config = yaml.safe_load(f)
+
+            adm_config = config['model']['adm']
+            adm = instantiate_class(args=(), init=adm_config)
+
+        state_dict = {}
+        for k, v in torch.load(ckpt)['state_dict'].items():
+            if k.startswith('adm.'):
+                state_dict[k[4:]] = v
+
+        adm.load_state_dict(state_dict, strict=True)
+        return adm
+
+
+class Megatts(nn.Module):
+    def __init__(
+        self,
+        g_ckpt: str,
+        g_config: str,
+        plm_ckpt: str,
+        plm_config: str,
+        adm_ckpt: str,
+        adm_config: str,
+        symbol_table: str
+    ):
+        super(Megatts, self).__init__()
+
+        self.generator = MegaG.from_pretrained(g_ckpt, g_config)
+        self.plm = MegaPLM.from_pretrained(plm_ckpt, plm_config)
+        self.adm = MegaADM.from_pretrained(adm_ckpt, adm_config)
+
+        self.tt = TextTokenizer()
+        self.ttc = TokensCollector(symbol_table)
+
+    def forward(
+            self,
+            wavs_dir: str,
+            text: str,
+    ):
+        # Make mrte mels
+        wavs = glob.glob(f'{wavs_dir}/*.wav')
+        mels = torch.empty(0)
+        for wav in wavs:
+            y = librosa.load(wav, sr=HIFIGAN_SR)[0]
+            y = librosa.util.normalize(y)
+            y = librosa.effects.trim(y, top_db=20)[0]
+            y = torch.from_numpy(y)
+
+            mel_spec = extract_mel_spec(y).transpose(0, 1)
+            mels = torch.cat([mels, mel_spec], dim=0)
+
+        mels = mels.unsqueeze(0)
+
+        # G2P
+        phone_tokens = self.ttc.phone2token(self.tt.tokenize_lty(self.tt.tokenize(text)))
+        phone_tokens = phone_tokens.unsqueeze(0)
+
+        print(phone_tokens.shape)
+
+        with torch.no_grad():
+            tc_latent = self.generator.mrte.tc_latent(phone_tokens, mels)
+            dt = self.adm.infer(tc_latent)

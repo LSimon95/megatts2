@@ -42,9 +42,7 @@ class TokensCollector():
             phone_tokens = cut.supervisions[0].custom['phone_tokens']
             duration_tokens = cut.supervisions[0].custom['duration_tokens']
 
-            phone_tokens_list.append(torch.Tensor(
-                [self.token2idx[token] for token in phone_tokens]
-            ))
+            phone_tokens_list.append(self.phone2token(phone_tokens))
             duration_tokens_list.append(torch.Tensor(duration_tokens))
 
             lens.append(len(phone_tokens))
@@ -58,12 +56,17 @@ class TokensCollector():
             duration_tokens_list_padded.append(F.pad(
                 duration_tokens_list[i], (0, max_len - lens[i]), mode='constant', value=0))
 
-        phone_tokens = torch.stack(phone_tokens_list_padded).type(torch.int64)
+        phone_tokens = torch.stack(phone_tokens_list_padded)
         duration_tokens = torch.stack(
             duration_tokens_list_padded).type(torch.int64)
         lens = torch.Tensor(lens).to(dtype=torch.int32)
 
         return phone_tokens, duration_tokens, lens
+
+    def phone2token(self, phone: List) -> int:
+        return torch.Tensor(
+            [self.token2idx[token] for token in phone]
+        ).type(torch.int64)
 
 
 class TTSDataset(torch.utils.data.Dataset):
@@ -246,20 +249,21 @@ class MegaADMDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, cuts_sample: CutSet) -> Dict:
         duration_token_list = []
-        tc_latent_list =[]
+        tc_latent_list = []
         lens = []
         for cut in cuts_sample:
             spk = cut.supervisions[0].speaker
             id = cut.recording_id
-            
+
             duration_tokens = cut.supervisions[0].custom['duration_tokens']
             if np.max(duration_tokens) >= self.max_duration_token:
                 continue
 
-            duration_tokens = torch.Tensor(duration_tokens).to(dtype=torch.int32)
-            
+            duration_tokens = torch.Tensor(
+                duration_tokens).to(dtype=torch.int32)
+
             latents = np.load(f'{self.ds_path}/latents/{spk}/{id}.npy',
-                          allow_pickle=True).item()
+                              allow_pickle=True).item()
             tc_latent = torch.from_numpy(latents['tc_latent'])[0]
             assert tc_latent.shape[0] == duration_tokens.shape[0]
 
@@ -277,8 +281,9 @@ class MegaADMDataset(torch.utils.data.Dataset):
                 duration_token_list[i], (1, max_len - lens[i]), mode='constant', value=0))
             tc_latent_list_padded.append(F.pad(
                 tc_latent_list[i], (0, 0, 0, max_len - lens[i]), mode='constant', value=0))
-            
-        duration_tokens = torch.stack(duration_token_list_padded).type(torch.float32).unsqueeze(-1)
+
+        duration_tokens = torch.stack(duration_token_list_padded).type(
+            torch.float32).unsqueeze(-1)
         tc_latents = torch.stack(tc_latent_list_padded).type(torch.float32)
         lens = torch.Tensor(lens).to(dtype=torch.int32)
 

@@ -154,7 +154,6 @@ class MRTE(nn.Module):
     def tc_latent(
             self,
             phone: torch.Tensor,  # (B, T)
-            phone_lens: torch.Tensor,  # (B,)
             mel: torch.Tensor,  # (B, T, mel_bins)
     ):
         phone_emb = self.phone_embedding(phone)
@@ -163,7 +162,7 @@ class MRTE(nn.Module):
         mel = rearrange(mel, 'B T D -> B D T')
         mel_context = self.mel_encoder(mel)
         mel_context = rearrange(mel_context, 'B D T -> B T D')
-        phone_x = self.phone_encoder(phone_pos, phone_lens)
+        phone_x = self.phone_encoder(phone_pos)
 
         tc_latent = self.mha(phone_x, kv=mel_context)
         tc_latent = self.norm(tc_latent)

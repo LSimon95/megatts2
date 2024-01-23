@@ -118,11 +118,14 @@ class TransformerEncoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        x_lens: torch.Tensor,
+        x_lens: torch.Tensor = None,
         causal: bool = False
     ) -> torch.Tensor:
-
-        mask = make_attn_mask(x_lens, self.layers[0].n_heads, causal=causal)
+        
+        if x_lens is not None:
+            mask = make_attn_mask(x_lens, self.layers[0].n_heads, causal=causal)
+        else:
+            mask = None
         for layer in self.layers:
             x = layer(x, mask=mask)
         if self.norm is not None:
