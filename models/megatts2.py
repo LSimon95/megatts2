@@ -352,15 +352,11 @@ class Megatts(nn.Module):
 
         with torch.no_grad():
             tc_latent = self.generator.mrte.tc_latent(phone_tokens, mels)
-            print(tc_latent.shape)
             dt = self.adm.infer(tc_latent)[..., 0]
             tc_latent_expand = self.lr(tc_latent, dt)
-            print(tc_latent_expand.shape)
             tc_latent = F.max_pool1d(tc_latent_expand.transpose(
                 1, 2), 8, ceil_mode=True).transpose(1, 2)
-            print(tc_latent.shape)
             p_codes = self.plm.infer(tc_latent)
-            print(p_codes.shape)
 
             zq = self.generator.vqpe.vq.decode(p_codes.unsqueeze(0))
             zq = rearrange(
