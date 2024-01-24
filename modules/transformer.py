@@ -50,7 +50,7 @@ class MultiHeadAttention(nn.Module):
         k = k.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
         att = F.scaled_dot_product_attention(
-            q, k, v, mask, self.dropout, False)
+            q, k, v, mask, self.dropout if self.training else 0.0, False)
 
         att = att.transpose(1, 2).contiguous().view(bsz, tgt_len, self.qkv_dim)
 

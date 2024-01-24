@@ -15,13 +15,16 @@ import yaml
 
 from utils.utils import instantiate_class
 import glob
-import soundfile as sf
 import librosa
 
-from modules.tokenizer import extract_mel_spec, TextTokenizer, HIFIGAN_SR
+from modules.tokenizer import extract_mel_spec, TextTokenizer, HIFIGAN_SR, HIFIGAN_HOP_LENGTH
 from modules.datamodule import TokensCollector
 
 import numpy as np
+from modules.mrte import LengthRegulator
+from speechbrain.pretrained import HIFIGAN
+
+import torchaudio
 
 
 class MegaG(nn.Module):
@@ -159,6 +162,24 @@ class MegaPLM(nn.Module):
 
         return logits, target
 
+    def infer(
+            self,
+            tc_latent: torch.Tensor,  # (B, T, D)
+    ):
+        T = tc_latent.shape[1]
+        p_code = torch.Tensor([1024]).to(
+            tc_latent.device).type(torch.int64).unsqueeze(0)
+        for t in range(T):
+            pc_emb = self.pc_embedding(p_code)
+            x_emb = torch.cat([tc_latent[:, 0:t+1, :], pc_emb], dim=-1)
+            x_pos = self.pos(x_emb)
+
+            x = self.plm(x_pos)
+            logits = self.predict_layer(x)[:, -1:, :]
+            p_code = torch.cat([p_code, logits.argmax(dim=-1)], dim=1)
+
+        return p_code[:, 1:]
+
     @classmethod
     def from_pretrained(cls, ckpt: str, config: str) -> "MegaPLM":
 
@@ -238,13 +259,11 @@ class MegaADM(nn.Module):
         tc_latents: torch.Tensor,  # (B, T, D)
     ):
         T = tc_latents.shape[1]
-
-        tc_latent_ar = tc_latents[:, 0:1, :]
         p_code = torch.Tensor([0]).to(
             tc_latents.device).unsqueeze(0).unsqueeze(1)
         for t in range(T):
             dt_emb = self.dt_linear_emb(p_code)
-            tc_emb = self.tc_linear_emb(tc_latent_ar)
+            tc_emb = self.tc_linear_emb(tc_latents[:, 0:t+1, :])
 
             x_emb = torch.cat([tc_emb, dt_emb], dim=-1)
             x_pos = self.pos_emb(x_emb)
@@ -252,8 +271,6 @@ class MegaADM(nn.Module):
             x = self.adm(x_pos)
             dt_predict = self.predict_layer(x)[:, -1:, :]
             p_code = torch.cat([p_code, dt_predict], dim=1)
-            tc_latent_ar = torch.cat(
-                [tc_latent_ar, tc_latents[:, t:t+1, :]], dim=1)
 
         return (p_code[:, 1:, :] + 0.5).to(torch.int32).clamp(1, 128)
 
@@ -289,37 +306,74 @@ class Megatts(nn.Module):
         super(Megatts, self).__init__()
 
         self.generator = MegaG.from_pretrained(g_ckpt, g_config)
+        self.generator.eval()
         self.plm = MegaPLM.from_pretrained(plm_ckpt, plm_config)
+        self.plm.eval()
         self.adm = MegaADM.from_pretrained(adm_ckpt, adm_config)
+        self.adm.eval()
 
         self.tt = TextTokenizer()
         self.ttc = TokensCollector(symbol_table)
+
+        self.lr = LengthRegulator(
+            HIFIGAN_HOP_LENGTH, 16000, (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000))
+
+        self.hifi_gan = HIFIGAN.from_hparams(
+            source="speechbrain/tts-hifigan-libritts-16kHz")
+        self.hifi_gan.eval()
 
     def forward(
             self,
             wavs_dir: str,
             text: str,
     ):
+        mels_prompt = None
         # Make mrte mels
         wavs = glob.glob(f'{wavs_dir}/*.wav')
         mels = torch.empty(0)
         for wav in wavs:
             y = librosa.load(wav, sr=HIFIGAN_SR)[0]
             y = librosa.util.normalize(y)
-            y = librosa.effects.trim(y, top_db=20)[0]
+            # y = librosa.effects.trim(y, top_db=20)[0]
             y = torch.from_numpy(y)
 
             mel_spec = extract_mel_spec(y).transpose(0, 1)
             mels = torch.cat([mels, mel_spec], dim=0)
 
+            if mels_prompt is None:
+                mels_prompt = mel_spec
+
         mels = mels.unsqueeze(0)
 
         # G2P
-        phone_tokens = self.ttc.phone2token(self.tt.tokenize_lty(self.tt.tokenize(text)))
+        phone_tokens = self.ttc.phone2token(
+            self.tt.tokenize_lty(self.tt.tokenize(text)))
         phone_tokens = phone_tokens.unsqueeze(0)
-
-        print(phone_tokens.shape)
 
         with torch.no_grad():
             tc_latent = self.generator.mrte.tc_latent(phone_tokens, mels)
-            dt = self.adm.infer(tc_latent)
+            print(tc_latent.shape)
+            dt = self.adm.infer(tc_latent)[..., 0]
+            tc_latent_expand = self.lr(tc_latent, dt)
+            print(tc_latent_expand.shape)
+            tc_latent = F.max_pool1d(tc_latent_expand.transpose(
+                1, 2), 8, ceil_mode=True).transpose(1, 2)
+            print(tc_latent.shape)
+            p_codes = self.plm.infer(tc_latent)
+            print(p_codes.shape)
+
+            zq = self.generator.vqpe.vq.decode(p_codes.unsqueeze(0))
+            zq = rearrange(
+                zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, 8, -1)
+            zq = rearrange(zq, "B T S D -> B (T S) D")
+            x = torch.cat(
+                [tc_latent_expand, zq[:, :tc_latent_expand.shape[1], :]], dim=-1)
+            x = rearrange(x, 'B T D -> B D T')
+            x = self.generator.decoder(x)
+
+            audio = self.hifi_gan.decode_batch(x.cpu())
+            audio_prompt = self.hifi_gan.decode_batch(
+                mels_prompt.unsqueeze(0).transpose(1, 2).cpu())
+            audio = torch.cat([audio_prompt, audio], dim=-1)
+
+            torchaudio.save('test.wav', audio[0], HIFIGAN_SR)
