@@ -4,8 +4,8 @@ Unofficial implementation of Megatts2
 ## TODO
 - [x] Prepare dataset
 - [x] VQ-GAN
-- [ ] ADM
-- [ ] PLM
+- [x] ADM
+- [x] PLM
 
 ## Requirements
 - python=3.10
