@@ -26,6 +26,7 @@ Unofficial implementation of Megatts2
 3. mfa model download acoustic mandarin_mfa
 4. mfa align data/wavs utils/mandarin_pinyin_to_mfa_lty.dict mandarin_mfa data/textgrids --clean -j 12 -t /workspace/tmp
 5. Run `python3 prepare_ds.py --stage 1 --num_workers 4 --wavtxt_path data/wavs --text_grid_path data/textgrids --ds_path data/ds` 
+6. Run `python3 prepare_ds.py --stage 2 --generator_config configs/config_gan.yaml --generator_ckpt generator.ckpt` after training generator.
 
 ## Train
 Training procedure refers to Pytorch-lightning

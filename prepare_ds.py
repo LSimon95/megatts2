@@ -24,7 +24,7 @@ from utils.textgrid import read_textgrid
 
 import argparse
 
-from lhotse import validate_recordings_and_supervisions, CutSet, NumpyHdf5Writer, load_manifest_lazy
+from lhotse import validate_recordings_and_supervisions, CutSet, NumpyHdf5Writer, load_manifest_lazy, load_manifest
 from lhotse.audio import Recording, RecordingSet
 from lhotse.supervision import SupervisionSegment, SupervisionSet
 from lhotse.recipes.utils import read_manifests_if_cached
@@ -38,10 +38,16 @@ from modules.tokenizer import (
     MelSpecExtractor,
     AudioFeatExtraConfig
 )
+from models.megatts2 import MegaG
+from modules.datamodule import TTSDataset, make_spk_cutset
+
 from utils.symbol_table import SymbolTable
 
 import soundfile as sf
 import librosa
+
+import torch
+import numpy as np
 
 def make_lab(tt, wav):
     id = wav.split('/')[-1].split('.')[0]
@@ -72,6 +78,10 @@ class DatasetMaker:
                             default=0.03, help='Test set ratio')
         parser.add_argument('--trim_wav', type=bool,
                             default=False, help='Trim wav by textgrid')
+        parser.add_argument('--generator_ckpt', type=str,
+                            default='generator.ckpt', help='Load generator checkpoint')
+        parser.add_argument('--generator_config', type=str,
+                            default='configs/config_gan.yaml', help='Load generator config')
 
         self.args = parser.parse_args()
 
@@ -211,6 +221,41 @@ class DatasetMaker:
             
         print(f'max_duration_token: {max_duration_token}')
 
+    def extract_latent(self):
+
+        os.system(f'mkdir -p {self.args.ds_path}/latents')
+
+        G = MegaG.from_pretrained(dm.args.generator_ckpt, dm.args.generator_config)
+        G = G.cuda()
+        G.eval()
+
+        cs_all = load_manifest(f'{dm.args.ds_path}/cuts_train.jsonl.gz') + load_manifest(f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
+        spk_cs = make_spk_cutset(cs_all)
+
+        for spk in spk_cs.keys():
+            os.system(f'mkdir -p {self.args.ds_path}/latents/{spk}')
+
+        ttsds = TTSDataset(spk_cs, f'{dm.args.ds_path}', 10)
+
+        for c in tqdm(cs_all):
+            id = c.recording_id
+            spk = c.supervisions[0].speaker
+            batch = ttsds.__getitem__(CutSet.from_cuts([c]))
+
+            s2_latent = {}
+            with torch.no_grad():
+
+                tc_latent, p_code = G.s2_latent(
+                    batch['phone_tokens'].cuda(),
+                    batch['tokens_lens'].cuda(),
+                    batch['mel_timbres'].cuda(),
+                    batch['mel_targets'].cuda()
+                )
+
+                s2_latent['tc_latent'] = tc_latent.cpu().numpy()
+                s2_latent['p_code'] = p_code.cpu().numpy()
+
+            np.save(f'{self.args.ds_path}/latents/{spk}/{id}.npy', s2_latent)
 
 if __name__ == '__main__':
     dm = DatasetMaker()
@@ -241,3 +286,5 @@ if __name__ == '__main__':
         unique_phonemes.to_file(f'{dm.args.ds_path}/{unique_phonemes_file}')
 
         print(cs.describe())
+    elif dm.args.stage == 2:
+        dm.extract_latent()

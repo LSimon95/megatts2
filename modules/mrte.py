@@ -7,8 +7,8 @@ from einops import rearrange
 from typing import List
 
 from modules.embedding import TokenEmbedding, SinePositionalEmbedding
-from modules.convnet import ConvNet
-from modules.transformer import (TransformerEncoder, 
+from modules.convnet import ConvNetDouble, ConvNet
+from modules.transformer import (TransformerEncoder,
                                  TransformerEncoderLayer,
                                  MultiHeadAttention)
 from utils.utils import make_attn_mask
@@ -18,6 +18,7 @@ from modules.tokenizer import (
     HIFIGAN_MEL_CHANNELS,
     HIFIGAN_HOP_LENGTH
 )
+
 
 def create_alignment(base_mat, duration_tokens):
     N, L = duration_tokens.shape
@@ -29,20 +30,21 @@ def create_alignment(base_mat, duration_tokens):
             count = count + duration_tokens[i][j]
     return base_mat
 
+
 class LengthRegulator(nn.Module):
     """ Length Regulator from FastSpeech """
 
-    def __init__(self, mel_frames, sample_rate, duration_tokne_ms):
+    def __init__(self, mel_frames, sample_rate, duration_token_ms):
         super(LengthRegulator, self).__init__()
 
-        assert (mel_frames / sample_rate * 1000 / duration_tokne_ms) == 1
+        assert (mel_frames / sample_rate * 1000 / duration_token_ms) == 1
 
     def forward(
-                self,
-                x: torch.Tensor, # (B, T, D)
-                duration_tokens: torch.Tensor, # (B, T) int for duration, unit is 10ms
-                mel_max_length=None
-            ):
+        self,
+        x: torch.Tensor,  # (B, T, D)
+        duration_tokens: torch.Tensor,  # (B, T) int for duration
+        mel_max_length=None
+    ):
 
         bsz, input_len, _ = x.size()
 
@@ -60,120 +62,133 @@ class LengthRegulator(nn.Module):
 
 class MRTE(nn.Module):
     def __init__(
-            self, 
+            self,
             mel_bins: int = HIFIGAN_MEL_CHANNELS,
             mel_frames: int = HIFIGAN_HOP_LENGTH,
-            attn_dim: int = 512,
-            ff_dim: int = 1024,
-            n_heads: int = 2,
-            n_layers: int = 8,
-            ge_kernel_size: int = 31,
-            ge_hidden_sizes: List = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
-            ge_activation: str = 'ReLU',
-            ge_out_channels: int = 512,
-            duration_tokne_ms: float = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+            mel_activation: str = 'ReLU',
+            mel_kernel_size: int = 3,
+            mel_stride: int = 16,
+            mel_n_layer: int = 5,
+            mel_n_stack: int = 5,
+            mel_n_block: int = 2,
+            content_ff_dim: int = 1024,
+            content_n_heads: int = 2,
+            content_n_layers: int = 8,
+            hidden_size: int = 512,
+            duration_token_ms: float = (
+                HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
             phone_vocab_size: int = 320,
             dropout: float = 0.1,
             sample_rate: int = HIFIGAN_SR,
     ):
         super(MRTE, self).__init__()
 
-        self.n_heads = n_heads
-        
+        self.n_heads = content_n_heads
+        self.mel_bins = mel_bins
+        self.hidden_size = hidden_size
+
         self.phone_embedding = TokenEmbedding(
-            dim_model=attn_dim,
+            dim_model=hidden_size,
             vocab_size=phone_vocab_size,
             dropout=dropout,
         )
 
         self.phone_pos_embedding = SinePositionalEmbedding(
-            dim_model=attn_dim,
+            dim_model=hidden_size,
             dropout=dropout,
         )
 
-        self.mel_embedding = nn.Linear(mel_bins, attn_dim)
-        self.mel_pos_embedding = SinePositionalEmbedding(
-            dim_model=attn_dim,
-            dropout=dropout,
+        self.mel_encoder_middle_layer = nn.Conv1d(
+            in_channels=hidden_size,
+            out_channels=hidden_size,
+            kernel_size=mel_stride + 1,
+            stride=mel_stride,
+            padding=(mel_stride) // 2,
         )
-
-        self.mel_encoder = TransformerEncoder(
-            TransformerEncoderLayer(
-                dim=attn_dim,
-                ff_dim=ff_dim,
-                conv_ff=True,
-                n_heads=n_heads,
-                dropout=dropout,
-            ),
-            num_layers=n_layers,
+        self.mel_encoder = ConvNetDouble(
+            in_channels=mel_bins,
+            out_channels=hidden_size,
+            hidden_size=hidden_size,
+            n_layers=mel_n_layer,
+            n_stacks=mel_n_stack,
+            n_blocks=mel_n_block,
+            middle_layer=self.mel_encoder_middle_layer,
+            kernel_size=mel_kernel_size,
+            activation=mel_activation,
         )
 
         self.phone_encoder = TransformerEncoder(
             TransformerEncoderLayer(
-                dim=attn_dim,
-                ff_dim=ff_dim,
+                dim=hidden_size,
+                ff_dim=content_ff_dim,
                 conv_ff=True,
-                n_heads=n_heads,
+                n_heads=content_n_heads,
                 dropout=dropout,
             ),
-            num_layers=n_layers,
+            num_layers=content_n_layers,
         )
 
         self.mha = MultiHeadAttention(
-            qkv_dim=attn_dim,
-            n_heads=n_heads,
+            qkv_dim=hidden_size,
+            n_heads=1,
             dropout=dropout,
         )
-        self.norm = nn.LayerNorm(attn_dim)
+        self.norm = nn.LayerNorm(hidden_size)
         self.activation = nn.ReLU()
 
-        self.compress_features = nn.Linear(attn_dim + ge_out_channels, ge_out_channels)
-
-        self.ge = ConvNet(
-            hidden_sizes = ge_hidden_sizes,
-            kernel_size = ge_kernel_size,
-            stack_size  = 3,
-            activation = ge_activation,
-            avg_pooling = True
-        )
-
-        self.length_regulator = LengthRegulator(mel_frames, sample_rate, duration_tokne_ms)
-
-    def forward(
-            self,
-            duration_tokens: torch.Tensor, # (B, T)
-            phone: torch.Tensor, # (B, T)
-            phone_lens: torch.Tensor, # (B,)
-            mel: torch.Tensor, # (B, T, mel_bins)
-            mel_lens: torch.Tensor, # (B,)
-    ):
+        self.length_regulator = LengthRegulator(
+            mel_frames, sample_rate, duration_token_ms)
         
+
+        # self.test_pllm = TransformerEncoder(
+        #     TransformerEncoderLayer(
+        #         dim=1024,
+        #         ff_dim=1024,
+        #         conv_ff=True,
+        #         n_heads=16,
+        #         dropout=dropout,
+        #     ),
+        #     num_layers=12,
+        # )
+
+    def tc_latent(
+            self,
+            phone: torch.Tensor,  # (B, T)
+            mel: torch.Tensor,  # (B, T, mel_bins)
+    ):
         phone_emb = self.phone_embedding(phone)
         phone_pos = self.phone_pos_embedding(phone_emb)
 
-        mel_emb = self.mel_embedding(mel)
-        mel_pos = self.mel_pos_embedding(mel_emb)
+        mel = rearrange(mel, 'B T D -> B D T')
+        mel_context = self.mel_encoder(mel)
+        mel_context = rearrange(mel_context, 'B D T -> B T D')
+        phone_x = self.phone_encoder(phone_pos)
 
-        mel_context = self.mel_encoder(mel_pos, mel_lens)
-        phone_x = self.phone_encoder(phone_pos, phone_lens)
+        tc_latent = self.mha(phone_x, kv=mel_context)
+        tc_latent = self.norm(tc_latent)
+        tc_latent = self.activation(tc_latent)
 
-        phone_latent = self.mha(phone_x, kv=mel_context)
-        phone_latent = self.norm(phone_latent)
-        phone_latent = self.activation(phone_latent)
+        return tc_latent
 
-        mel = rearrange(mel, "B T D -> B D T")
-        ge = self.ge(mel)
-        ge = ge.unsqueeze(1).repeat(1, phone_latent.shape[1], 1)
-
-        out = self.compress_features(torch.cat([ge, phone_latent], dim=-1))
-        out = self.length_regulator(phone_latent, duration_tokens)
+    def forward(
+            self,
+            duration_tokens: torch.Tensor,  # (B, T)
+            phone: torch.Tensor,  # (B, T)
+            phone_lens: torch.Tensor,  # (B,)
+            mel: torch.Tensor,  # (B, T, mel_bins)
+    ):
+        tc_latent = self.tc_latent(phone, phone_lens, mel)
+        
+        out = self.length_regulator(tc_latent, duration_tokens)
         return out
+
 
 def test():
     lr_in = torch.randn(2, 10, 128)
     lr = LengthRegulator(240, 16000, 15)
 
-    duration_tokens = torch.tensor([[1, 2, 3, 4], [1, 2, 3, 5]]).to(dtype=torch.int32)
+    duration_tokens = torch.tensor(
+        [[1, 2, 3, 4], [1, 2, 3, 5]]).to(dtype=torch.int32)
 
     out = lr(lr_in, duration_tokens)
     assert out.shape == (2, 11, 128)
@@ -181,27 +196,28 @@ def test():
     mrte = MRTE(
         mel_bins = HIFIGAN_MEL_CHANNELS,
         mel_frames = HIFIGAN_HOP_LENGTH,
-        attn_dim = 512,
         ff_dim = 1024,
-        nhead = 2,
+        n_heads = 2,
         n_layers = 8,
-        ge_kernel_size = 31,
-        ge_hidden_sizes = [HIFIGAN_MEL_CHANNELS, 256, 256, 512, 512],
-        ge_activation = 'ReLU',
-        ge_out_channels = 512,
-        duration_tokne_ms = (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+        hidden_size = 512,
+        activation = 'ReLU',
+        kernel_size = 3,
+        stride = 16,
+        n_stacks = 5,
+        n_blocks = 2,
+        duration_token_ms = (
+            HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
         phone_vocab_size = 320,
         dropout = 0.1,
         sample_rate = HIFIGAN_SR,
     )
     mrte = mrte.to('cuda')
 
-    duration_tokens = torch.tensor([[1, 2, 3, 4], [1, 1, 1, 2]]).to(dtype=torch.int32).to('cuda')
+    duration_tokens = torch.tensor([[1, 2, 3, 4], [1, 1, 1, 2]]).to(
+        dtype=torch.int32).to('cuda')
 
     t = torch.randint(0, 320, (2, 10)).to(dtype=torch.int64).to('cuda')
     tl = torch.tensor([6, 10]).to(dtype=torch.int64).to('cuda')
-    m = torch.randn(2, 2400, HIFIGAN_MEL_CHANNELS).to('cuda')
-    ml = torch.tensor([1200, 2400]).to(dtype=torch.int64).to('cuda')
+    m = torch.randn(2, 347, HIFIGAN_MEL_CHANNELS).to('cuda')
 
-    out = mrte(duration_tokens, t, tl, m, ml)
-
+    out = mrte(duration_tokens, t, tl, m)

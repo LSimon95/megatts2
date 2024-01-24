@@ -12,8 +12,9 @@ import torch
 
 from typing import Union
 
-import torchaudio as ta
 import re
+
+from speechbrain.lobes.models.FastSpeech2 import mel_spectogram
 
 HIFIGAN_SR = 16000
 HIFIGAN_HOP_LENGTH = 256
@@ -44,7 +45,7 @@ class TextTokenizer:
         self.pinyin2lty = get_pinyin2lty()
 
     def phonemize(self, text: str) -> str:
-        text = re.sub(r'[^\w\s]+', ' ', text) # remove punctuation
+        text = re.sub(r'[^\w\s]+', ' ', text)  # remove punctuation
         text = re.sub(r'[ ]+', ' ', text)  # remove extra spaces
         text = text.lower()
 
@@ -91,17 +92,37 @@ class TextTokenizer:
         for token in pinyin_tokens:
             if token in self.pinyin2lty.keys():
                 lty_tokens = self.pinyin2lty[token]
-                phones = self.separator.syllable.join(lty_tokens)
-                lty_tokens = re.split(rf'({self.separator.syllable})', phones)
                 lty_tokens_list += lty_tokens
             else:
                 lty_tokens_list.append(token)
         return lty_tokens_list
 
+
 @dataclass
 class AudioFeatExtraConfig:
     frame_shift: Seconds = HIFIGAN_HOP_LENGTH / HIFIGAN_SR
     feature_dim: int = HIFIGAN_MEL_CHANNELS
+
+
+def extract_mel_spec(samples):
+    mel_spec, _ = mel_spectogram(
+        audio=samples,
+        sample_rate=HIFIGAN_SR,
+        hop_length=HIFIGAN_HOP_LENGTH,
+        win_length=HIFIGAN_WIN_LENGTH,
+        n_mels=HIFIGAN_MEL_CHANNELS,
+        n_fft=HIFIGAN_NFFT,
+        f_min=0,
+        f_max=HIFIGAN_MAX_FREQ,
+        power=1,
+        normalized=False,
+        min_max_energy_norm=True,
+        norm="slaney",
+        mel_scale="slaney",
+        compression=True
+    )
+
+    return mel_spec
 
 
 class MelSpecExtractor(FeatureExtractor):
@@ -121,16 +142,10 @@ class MelSpecExtractor(FeatureExtractor):
             samples = torch.from_numpy(samples)
         torch.set_num_threads(1)
         # Hifigan
-        mel_spec = ta.transforms.MelSpectrogram(
-            sample_rate=sampling_rate,
-            n_fft=HIFIGAN_NFFT,
-            win_length=HIFIGAN_WIN_LENGTH,
-            hop_length=HIFIGAN_HOP_LENGTH,
-            n_mels=self.config.feature_dim,
-            f_min=0,
-            f_max=HIFIGAN_MAX_FREQ,
-            power=1,
-        )(samples)
+
+        samples = samples.squeeze()
+        mel_spec = extract_mel_spec(samples)
+
         duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
         num_frames = compute_num_frames(
             duration=duration,

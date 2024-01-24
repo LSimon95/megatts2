@@ -50,7 +50,7 @@ class MultiHeadAttention(nn.Module):
         k = k.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
         v = v.view(bsz, src_len, self.n_heads, self.head_dim).transpose(1, 2)
         att = F.scaled_dot_product_attention(
-            q, k, v, mask, self.dropout, False)
+            q, k, v, mask, self.dropout if self.training else 0.0, False)
 
         att = att.transpose(1, 2).contiguous().view(bsz, tgt_len, self.qkv_dim)
 
@@ -118,11 +118,14 @@ class TransformerEncoder(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        x_lens: torch.Tensor,
+        x_lens: torch.Tensor = None,
+        causal: bool = False
     ) -> torch.Tensor:
-
-        mask = make_attn_mask(x_lens, self.layers[0].n_heads)
-
+        
+        if x_lens is not None:
+            mask = make_attn_mask(x_lens, self.layers[0].n_heads, causal=causal)
+        else:
+            mask = None
         for layer in self.layers:
             x = layer(x, mask=mask)
         if self.norm is not None:
