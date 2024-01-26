@@ -2,27 +2,6 @@ from pypinyin import pinyin, Style
 from phonemizer.separator import Separator
 
 import re
-from dataclasses import dataclass
-
-from lhotse.features import FeatureExtractor
-from lhotse.utils import Seconds, compute_num_frames
-
-import numpy as np
-import torch
-
-from typing import Union
-
-import re
-
-from speechbrain.lobes.models.FastSpeech2 import mel_spectogram
-
-HIFIGAN_SR = 16000
-HIFIGAN_HOP_LENGTH = 256
-HIFIGAN_WIN_LENGTH = 1024
-HIFIGAN_MEL_CHANNELS = 80
-HIFIGAN_NFFT = 1024
-HIFIGAN_MAX_FREQ = 8000
-
 
 def get_pinyin2lty():
     pinyin2lty = {}
@@ -96,63 +75,6 @@ class TextTokenizer:
             else:
                 lty_tokens_list.append(token)
         return lty_tokens_list
-
-
-@dataclass
-class AudioFeatExtraConfig:
-    frame_shift: Seconds = HIFIGAN_HOP_LENGTH / HIFIGAN_SR
-    feature_dim: int = HIFIGAN_MEL_CHANNELS
-
-
-def extract_mel_spec(samples):
-    mel_spec, _ = mel_spectogram(
-        audio=samples,
-        sample_rate=HIFIGAN_SR,
-        hop_length=HIFIGAN_HOP_LENGTH,
-        win_length=HIFIGAN_WIN_LENGTH,
-        n_mels=HIFIGAN_MEL_CHANNELS,
-        n_fft=HIFIGAN_NFFT,
-        f_min=0,
-        f_max=HIFIGAN_MAX_FREQ,
-        power=1,
-        normalized=False,
-        min_max_energy_norm=True,
-        norm="slaney",
-        mel_scale="slaney",
-        compression=True
-    )
-
-    return mel_spec
-
-
-class MelSpecExtractor(FeatureExtractor):
-    name = "mel_spec"
-    config_type = AudioFeatExtraConfig
-
-    @property
-    def frame_shift(self) -> Seconds:
-        return self.config.frame_shift
-
-    def feature_dim(self, sampling_rate: int) -> int:
-        return self.config.feature_dim
-
-    def extract(self, samples: Union[np.ndarray, torch.Tensor], sampling_rate: int) -> np.ndarray:
-        assert sampling_rate == HIFIGAN_SR
-        if not isinstance(samples, torch.Tensor):
-            samples = torch.from_numpy(samples)
-        torch.set_num_threads(1)
-        # Hifigan
-
-        samples = samples.squeeze()
-        mel_spec = extract_mel_spec(samples)
-
-        duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
-        num_frames = compute_num_frames(
-            duration=duration,
-            frame_shift=self.frame_shift,
-            sampling_rate=sampling_rate,
-        )
-        return mel_spec.squeeze(0).permute(1, 0)[:num_frames, :].numpy()
 
 
 if __name__ == '__main__':

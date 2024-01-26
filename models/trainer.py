@@ -11,7 +11,7 @@ import math
 
 from .megatts2 import MegaG, MegaPLM, MegaADM
 from modules.dscrm import Discriminator
-from modules.tokenizer import HIFIGAN_SR
+from modules.tokenizer import VOCODER_SR
 
 from utils.utils import plot_spectrogram_to_numpy
 
@@ -177,14 +177,14 @@ class MegaGANTrainer(pl.LightningModule):
                 "val/audio_target",
                 audio_target[0],
                 self.global_step,
-                sample_rate=HIFIGAN_SR,
+                sample_rate=VOCODER_SR,
             )
 
             self.logger.experiment.add_audio(
                 "val/audio_hat",
                 audio_hat[0],
                 self.global_step,
-                sample_rate=HIFIGAN_SR,
+                sample_rate=VOCODER_SR,
             )
 
         loss_re = torch.mean(torch.stack(

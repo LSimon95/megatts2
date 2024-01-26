@@ -24,7 +24,7 @@ import numpy as np
 
 from modules.mrte import LengthRegulator
 
-from .tokenizer import HIFIGAN_SR, HIFIGAN_HOP_LENGTH
+from .tokenizer import VOCODER_SR, VOCODER_HOP_SIZE
 
 
 class TokensCollector():
@@ -353,7 +353,7 @@ class TTSDataModule(pl.LightningDataModule):
             )
         elif self.hparams.dataset == 'MegaPLMDataset':
             lr = LengthRegulator(
-                HIFIGAN_HOP_LENGTH, 16000, (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000))
+                VOCODER_HOP_SIZE, 16000, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
             dataset = MegaPLMDataset(
                 spk2cuts, self.hparams.ds_path, lr, 10, 1024)
 
@@ -450,7 +450,7 @@ def test():
 
     valid_dl = DataLoader(
         MegaPLMDataset(spk2cuts, 'data/ds', lr, 10,
-                       (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000)),
+                       (VOCODER_HOP_SIZE / VOCODER_SR * 1000)),
         batch_size=None,
         num_workers=0,
         sampler=SimpleCutSampler(

@@ -33,8 +33,8 @@ from lhotse.utils import Seconds, compute_num_frames
 from functools import partial
 
 from modules.tokenizer import (
-    HIFIGAN_SR,
-    HIFIGAN_HOP_LENGTH,
+    VOCODER_SR,
+    VOCODER_HOP_SIZE,
     MelSpecExtractor,
     AudioFeatExtraConfig
 )
@@ -111,7 +111,7 @@ class DatasetMaker:
             intervals = [i for i in read_textgrid(tg) if (i[3] == 'phones')]
 
             y, sr = librosa.load(
-                f'{self.args.wavtxt_path}/{speaker}/{id}.wav', sr=HIFIGAN_SR)
+                f'{self.args.wavtxt_path}/{speaker}/{id}.wav', sr=VOCODER_SR)
 
             if intervals[0][2] == '':
                 intervals = intervals[1:]
@@ -124,17 +124,17 @@ class DatasetMaker:
                 y = librosa.util.normalize(y)
 
                 sf.write(
-                    f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, HIFIGAN_SR)
+                    f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, VOCODER_SR)
 
             start = intervals[0][0]
             stop = intervals[-1][1]
 
-            frame_shift=HIFIGAN_HOP_LENGTH / HIFIGAN_SR
-            duration = round(y.shape[-1] / HIFIGAN_SR, ndigits=12)
+            frame_shift=VOCODER_HOP_SIZE / VOCODER_SR
+            duration = round(y.shape[-1] / VOCODER_SR, ndigits=12)
             n_frames = compute_num_frames(
                 duration=duration,
                 frame_shift=frame_shift,
-                sampling_rate=HIFIGAN_SR,
+                sampling_rate=VOCODER_SR,
             )
 
             duration_tokens = []

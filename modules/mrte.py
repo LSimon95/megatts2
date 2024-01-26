@@ -14,9 +14,9 @@ from modules.transformer import (TransformerEncoder,
 from utils.utils import make_attn_mask
 
 from modules.tokenizer import (
-    HIFIGAN_SR,
-    HIFIGAN_MEL_CHANNELS,
-    HIFIGAN_HOP_LENGTH
+    VOCODER_SR,
+    VOCODER_MEL_BINS,
+    VOCODER_HOP_SIZE
 )
 
 
@@ -63,8 +63,8 @@ class LengthRegulator(nn.Module):
 class MRTE(nn.Module):
     def __init__(
             self,
-            mel_bins: int = HIFIGAN_MEL_CHANNELS,
-            mel_frames: int = HIFIGAN_HOP_LENGTH,
+            mel_bins: int = VOCODER_MEL_BINS,
+            mel_frames: int = VOCODER_HOP_SIZE,
             mel_activation: str = 'ReLU',
             mel_kernel_size: int = 3,
             mel_stride: int = 16,
@@ -76,10 +76,10 @@ class MRTE(nn.Module):
             content_n_layers: int = 8,
             hidden_size: int = 512,
             duration_token_ms: float = (
-                HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+                VOCODER_HOP_SIZE / VOCODER_SR * 1000),
             phone_vocab_size: int = 320,
             dropout: float = 0.1,
-            sample_rate: int = HIFIGAN_SR,
+            sample_rate: int = VOCODER_SR,
     ):
         super(MRTE, self).__init__()
 
@@ -194,8 +194,8 @@ def test():
     assert out.shape == (2, 11, 128)
 
     mrte = MRTE(
-        mel_bins = HIFIGAN_MEL_CHANNELS,
-        mel_frames = HIFIGAN_HOP_LENGTH,
+        mel_bins = VOCODER_MEL_BINS,
+        mel_frames = VOCODER_HOP_SIZE,
         ff_dim = 1024,
         n_heads = 2,
         n_layers = 8,
@@ -206,10 +206,10 @@ def test():
         n_stacks = 5,
         n_blocks = 2,
         duration_token_ms = (
-            HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000),
+            VOCODER_HOP_SIZE / VOCODER_SR * 1000),
         phone_vocab_size = 320,
         dropout = 0.1,
-        sample_rate = HIFIGAN_SR,
+        sample_rate = VOCODER_SR,
     )
     mrte = mrte.to('cuda')
 
@@ -218,6 +218,6 @@ def test():
 
     t = torch.randint(0, 320, (2, 10)).to(dtype=torch.int64).to('cuda')
     tl = torch.tensor([6, 10]).to(dtype=torch.int64).to('cuda')
-    m = torch.randn(2, 347, HIFIGAN_MEL_CHANNELS).to('cuda')
+    m = torch.randn(2, 347, VOCODER_MEL_BINS).to('cuda')
 
     out = mrte(duration_tokens, t, tl, m)

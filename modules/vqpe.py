@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from modules.convnet import ConvNetDouble
 from modules.tokenizer import (
-    HIFIGAN_MEL_CHANNELS
+    VOCODER_MEL_BINS
 )
 from modules.quantization import ResidualVectorQuantizer
 
@@ -13,7 +13,7 @@ from einops import rearrange
 class VQProsodyEncoder(nn.Module):
     def __init__(
             self,
-            mel_bins: int = HIFIGAN_MEL_CHANNELS,
+            mel_bins: int = VOCODER_MEL_BINS,
             stride:int = 8,
             hidden_size: int = 384,
             kernel_size: int = 5,

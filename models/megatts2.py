@@ -17,7 +17,7 @@ from utils.utils import instantiate_class
 import glob
 import librosa
 
-from modules.tokenizer import extract_mel_spec, TextTokenizer, HIFIGAN_SR, HIFIGAN_HOP_LENGTH
+from modules.tokenizer import extract_mel_spec, TextTokenizer, VOCODER_SR, VOCODER_HOP_SIZE
 from modules.datamodule import TokensCollector
 
 import numpy as np
@@ -316,7 +316,7 @@ class Megatts(nn.Module):
         self.ttc = TokensCollector(symbol_table)
 
         self.lr = LengthRegulator(
-            HIFIGAN_HOP_LENGTH, 16000, (HIFIGAN_HOP_LENGTH / HIFIGAN_SR * 1000))
+            VOCODER_HOP_SIZE, 16000, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
 
         self.hifi_gan = HIFIGAN.from_hparams(
             source="speechbrain/tts-hifigan-libritts-16kHz")
@@ -332,7 +332,7 @@ class Megatts(nn.Module):
         wavs = glob.glob(f'{wavs_dir}/*.wav')
         mels = torch.empty(0)
         for wav in wavs:
-            y = librosa.load(wav, sr=HIFIGAN_SR)[0]
+            y = librosa.load(wav, sr=VOCODER_SR)[0]
             y = librosa.util.normalize(y)
             # y = librosa.effects.trim(y, top_db=20)[0]
             y = torch.from_numpy(y)
@@ -372,4 +372,4 @@ class Megatts(nn.Module):
                 mels_prompt.unsqueeze(0).transpose(1, 2).cpu())
             audio = torch.cat([audio_prompt, audio], dim=-1)
 
-            torchaudio.save('test.wav', audio[0], HIFIGAN_SR)
+            torchaudio.save('test.wav', audio[0], VOCODER_SR)
