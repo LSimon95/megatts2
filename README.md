@@ -2,19 +2,16 @@
 Unofficial implementation of Megatts2
 
 ## TODO
+### Base test
 - [x] Prepare dataset
 - [x] VQ-GAN
 - [x] ADM
 - [x] PLM
-
-## Requirements
-- python=3.10
-- lightning
-- lhotse
-- transformers
-- pypinyin
-- WeTextProcessing
-- phonemizer
+### Better version
+- [ ] Replace Hifigan with Bigvgan
+- [ ] Mix training Chinese and English
+- [ ] Train on about 1k hours of speech
+- [ ] Webui
 
 ## Install mfa
 1. conda create -n aligner && conda activate aligner
