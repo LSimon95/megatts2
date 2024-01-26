@@ -2,19 +2,16 @@
 Unofficial implementation of Megatts2
 
 ## TODO
+### Base test
 - [x] Prepare dataset
 - [x] VQ-GAN
-- [ ] ADM
-- [ ] PLM
-
-## Requirements
-- python=3.10
-- lightning
-- lhotse
-- transformers
-- pypinyin
-- WeTextProcessing
-- phonemizer
+- [x] ADM
+- [x] PLM
+### Better version
+- [ ] Replace Hifigan with Bigvgan
+- [ ] Mix training Chinese and English
+- [ ] Train on about 1k hours of speech
+- [ ] Webui
 
 ## Install mfa
 1. conda create -n aligner && conda activate aligner
@@ -31,9 +28,8 @@ Unofficial implementation of Megatts2
 ## Train
 Training procedure refers to Pytorch-lightning
 
-## Reconstructed mel-spectrogram
-### 400k steps on aishell dataset train by 4090
-![image info](examples/mel_step_400k_re_loss_0.4771.png) 
+## Infer test
+`python infer.py`
 
 ## License
 - MIT
