@@ -3,18 +3,19 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from modules.convnet import ConvNetDouble
-from modules.tokenizer import (
+from modules.feat_extractor import (
     VOCODER_MEL_BINS
 )
 from modules.quantization import ResidualVectorQuantizer
 
 from einops import rearrange
 
+
 class VQProsodyEncoder(nn.Module):
     def __init__(
             self,
             mel_bins: int = VOCODER_MEL_BINS,
-            stride:int = 8,
+            stride: int = 8,
             hidden_size: int = 384,
             kernel_size: int = 5,
             n_layers: int = 3,
@@ -23,7 +24,7 @@ class VQProsodyEncoder(nn.Module):
             vq_bins: int = 1024,
             vq_dim: int = 256,
             activation: str = 'ReLU',
-            ):
+    ):
         super(VQProsodyEncoder, self).__init__()
         self.stride = stride
         self.mel_bins = mel_bins
@@ -47,24 +48,32 @@ class VQProsodyEncoder(nn.Module):
             decay=0.99
         )
 
+        self.up_sample = nn.Conv1d(
+            in_channels=vq_dim,
+            out_channels=vq_dim * self.stride ,
+            kernel_size=kernel_size,
+            padding=(kernel_size - 1) // 2
+        )
+
     def forward(
-            self, 
-            mel: torch.Tensor, # (B, T, mel_bins)
-            ):
+            self,
+            mel: torch.Tensor,  # (B, T, mel_bins)
+    ):
         mel_len = mel.size(1)
         mel = mel[..., :self.mel_bins]
         mel = rearrange(mel, "B T D -> B D T")
         ze = self.convnet(mel)
         zq, codes, commit_loss = self.vq(ze)
         vq_loss = F.mse_loss(ze.detach(), zq)
-        zq = rearrange(zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, self.stride, -1)
-        zq = rearrange(zq, "B T S D -> B (T S) D")[:, :mel_len, :]
+
+        zq = self.up_sample(zq)
+        zq = rearrange(zq, "B (S D) T -> B (S T) D", S=8).contiguous()[:, :mel_len, :]
         return zq, commit_loss, vq_loss, codes
+
 
 def test():
     model = VQProsodyEncoder()
-    mel = torch.randn(2, 303, 80)
-    zq, commit_loss, vq_loss = model(mel)
+    mel = torch.randn(2, 303, 100)
+    zq, commit_loss, vq_loss, codes = model(mel)
 
-    print(zq.shape, commit_loss.shape, vq_loss.shape)
-
+    print(zq.shape, commit_loss.shape, vq_loss.shape, codes.shape)

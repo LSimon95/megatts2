@@ -11,11 +11,9 @@ import math
 
 from .megatts2 import MegaG, MegaPLM, MegaADM
 from modules.dscrm import Discriminator
-from modules.tokenizer import VOCODER_SR
+from modules.feat_extractor import VOCODER_SR
 
 from utils.utils import plot_spectrogram_to_numpy
-
-from speechbrain.pretrained import HIFIGAN
 
 from torchmetrics.classification import MulticlassAccuracy
 
@@ -164,27 +162,6 @@ class MegaGANTrainer(pl.LightningModule):
                     mel.data.cpu().numpy(), mel_hat.data.cpu().numpy()),
                 self.global_step,
                 dataformats="HWC",
-            )
-
-            with torch.no_grad():
-                hifi_gan = HIFIGAN.from_hparams(source="speechbrain/tts-hifigan-libritts-16kHz")
-                hifi_gan.eval()
-
-                audio_target = hifi_gan.decode_batch(mel.unsqueeze(0).cpu())
-                audio_hat = hifi_gan.decode_batch(mel_hat.unsqueeze(0).cpu())
-
-            self.logger.experiment.add_audio(
-                "val/audio_target",
-                audio_target[0],
-                self.global_step,
-                sample_rate=VOCODER_SR,
-            )
-
-            self.logger.experiment.add_audio(
-                "val/audio_hat",
-                audio_hat[0],
-                self.global_step,
-                sample_rate=VOCODER_SR,
             )
 
         loss_re = torch.mean(torch.stack(

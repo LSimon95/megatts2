@@ -10,14 +10,12 @@ from typing import Union
 
 from bigvgan.meldataset import mel_spectrogram
 
-
-VOCODER_SR = 16000
+VOCODER_SR = 24000
 VOCODER_HOP_SIZE = 256
 VOCODER_WIN_SIZE = 1024
-VOCODER_MEL_BINS = 80
+VOCODER_MEL_BINS = 100
 VOCODER_NFFT = 1024
-VOCODER_MAX_FREQ = 8000
-
+VOCODER_MAX_FREQ = 12000
 
 @dataclass
 class AudioFeatExtraConfig:
@@ -39,31 +37,44 @@ def extract_mel_spec(samples):
     )
 
 
-class MelSpecExtractor(FeatureExtractor):
-    name = "mel_spec"
-    config_type = AudioFeatExtraConfig
 
-    @property
-    def frame_shift(self) -> Seconds:
-        return self.config.frame_shift
 
-    def feature_dim(self, sampling_rate: int) -> int:
-        return self.config.feature_dim
+# class MelSpecExtractor(FeatureExtractor):
+#     name = "mel_spec"
+#     config_type = AudioFeatExtraConfig
 
-    def extract(self, samples: Union[np.ndarray, torch.Tensor], sampling_rate: int) -> np.ndarray:
-        assert sampling_rate == VOCODER_SR
-        if not isinstance(samples, torch.Tensor):
-            samples = torch.from_numpy(samples)
-        torch.set_num_threads(1)
-        # Hifigan
+#     @property
+#     def frame_shift(self) -> Seconds:
+#         return self.config.frame_shift
 
-        samples = samples.squeeze()
-        mel_spec = extract_mel_spec(samples)
+#     def feature_dim(self, sampling_rate: int) -> int:
+#         return self.config.feature_dim
 
-        duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
-        num_frames = compute_num_frames(
-            duration=duration,
-            frame_shift=self.frame_shift,
-            sampling_rate=sampling_rate,
-        )
-        return mel_spec.squeeze(0).permute(1, 0)[:num_frames, :].numpy()
+#     def extract(self, samples: Union[np.ndarray, torch.Tensor], sampling_rate: int) -> np.ndarray:
+#         assert sampling_rate == VOCODER_SR
+#         if not isinstance(samples, torch.Tensor):
+#             samples = torch.from_numpy(samples)
+#         torch.set_num_threads(1)
+#         # Hifigan
+
+#         samples = samples.squeeze()
+#         mel_spec = extract_mel_spec(samples)
+
+#         duration = round(samples.shape[-1] / sampling_rate, ndigits=12)
+#         num_frames = compute_num_frames(
+#             duration=duration,
+#             frame_shift=self.frame_shift,
+#             sampling_rate=sampling_rate,
+#         )
+#         return mel_spec.squeeze(0).permute(1, 0)[:num_frames, :].numpy()
+
+def test():
+    import torchaudio as ta
+    y, sr = ta.load('test.wav')
+    mel_spec = extract_mel_spec(y)
+    print(mel_spec.shape)
+
+    # # test bigvgan
+    # checkpoint_dict = load_checkpoint('/root/autodl-tmp/megatts2/bigvgan_base_24khz_100band/g_05000000.zip', 'cuda')
+
+

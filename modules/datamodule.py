@@ -3,12 +3,8 @@ import lightning.pytorch as pl
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-from lhotse import CutSet, load_manifest
-from lhotse.dataset.collation import collate_features
+from lhotse import CutSet, MonoCut, load_manifest_lazy
 from lhotse.dataset import DynamicBucketingSampler, SimpleCutSampler
-from lhotse.dataset.input_strategies import (
-    _get_executor
-)
 
 import torch
 import torch.nn.functional as F
@@ -24,7 +20,9 @@ import numpy as np
 
 from modules.mrte import LengthRegulator
 
-from .tokenizer import VOCODER_SR, VOCODER_HOP_SIZE
+from .feat_extractor import VOCODER_SR, VOCODER_HOP_SIZE
+
+import glob
 
 
 class TokensCollector():
@@ -68,26 +66,64 @@ class TokensCollector():
             [self.token2idx[token] for token in phone]
         ).type(torch.int64)
 
+def load_cutsets(ds_path: str, part: str) -> CutSet:
+    css = glob.glob(f'{ds_path}/manifests/*_cuts_{part}.jsonl.gz')
+    print(f'{part} manifest:', len(css))
+
+    cs = load_manifest_lazy(css[0])
+    for i in range(1, len(css)):
+        cs = cs + load_manifest_lazy(css[i])
+
+    return cs
 
 class TTSDataset(torch.utils.data.Dataset):
     def __init__(
             self,
-            spk2cuts: Dict,
             ds_path: str,
-            n_same_spk_samples: int = 10
+            n_same_spk_samples: int = 2
     ):
         super().__init__()
+        self.ds_path = ds_path
         self.tokens_collector = TokensCollector(
             f'{ds_path}/unique_text_tokens.k2symbols')
-        self.spk2cuts = spk2cuts
         self.n_same_spk_samples = n_same_spk_samples
 
+    def collect_mels(self, cuts) -> Tuple[torch.Tensor, torch.Tensor]:
+        mels = []
+        mel_lens = []
+
+        if isinstance(cuts, MonoCut):
+            cuts = [cuts]
+        elif isinstance(cuts, CutSet):
+            cuts = cuts
+        elif isinstance(cuts, List):
+            pass
+        else:
+            raise ValueError(f'Unsupported type: {type(cuts)}')
+
+        for cut in cuts:
+            if isinstance(cuts, List):
+                mel = torch.load(f'{self.ds_path}/mels/{cut[0]}/{cut[1]}.pt').squeeze(0)
+            else:
+                mel = torch.load(f'{self.ds_path}/mels/{cut.supervisions[0].speaker}/{cut.supervisions[0].id}.pt').squeeze(0)
+            mels.append(mel)
+            mel_lens.append(mel.shape[1])
+
+        max_len = max(mel_lens)
+
+        mels_padded = []
+        for i in range(len(mels)):
+            mels_padded.append(F.pad(
+                mels[i], (0, max_len - mel_lens[i]), mode='constant', value=0))
+        
+        mels = torch.stack(mels_padded).transpose(1, 2)
+        mel_lens = torch.Tensor(mel_lens).to(dtype=torch.int32)
+        return mels, mel_lens
+
     def __getitem__(self, cuts: CutSet) -> Dict:
-        phone_tokens, duration_tokens, tokens_lens = self.tokens_collector(
-            cuts)
-        mel_targets, mel_target_lens = collate_features(
-            cuts,
-            executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
+        phone_tokens, duration_tokens, tokens_lens = self.tokens_collector(cuts)
+
+        mel_targets, mel_target_lens = self.collect_mels(cuts)
 
         # align duration token and mel_target_lens
         for i in range(mel_target_lens.shape[0]):
@@ -96,20 +132,22 @@ class TTSDataset(torch.utils.data.Dataset):
             if sum_duration < mel_target_lens[i]:
                 mel_target_lens[i] = sum_duration
 
-        max_len = max(mel_target_lens)
-        mel_targets = mel_targets[:, :max_len, :]
+        mel_targets = mel_targets[:, :max(mel_target_lens), :]
 
         mel_timbres_list = []
         mel_timbre_lens_list = []
         n_sample = random.randint(2, self.n_same_spk_samples)
         for cut in cuts:
-            same_spk_cuts = self.spk2cuts[cut.supervisions[0].speaker]
-            same_spk_cuts = same_spk_cuts.sample(
-                n_cuts=min(n_sample, len(same_spk_cuts)))
 
-            mel_timbres_same_spk, mel_timbre_lens_same_spk = collate_features(
-                same_spk_cuts,
-                executor=_get_executor(8, executor_type=ThreadPoolExecutor),)
+            spk = cut.supervisions[0].speaker
+            mel_pts = glob.glob(f'{self.ds_path}/mels/{spk}/*.pt')
+            mel_pts = [pt.split('/')[-1].split('.')[0] for pt in mel_pts]
+            if len(mel_pts) >= 2:
+                # Remove the current cut
+                mel_pts.remove(cut.supervisions[0].id)
+            
+            same_spk_cuts = [(spk, pt) for pt in mel_pts]
+            mel_timbres_same_spk, mel_timbre_lens_same_spk = self.collect_mels(same_spk_cuts)
 
             mel_timbre = mel_timbres_same_spk[0, :mel_timbre_lens_same_spk[0]]
             for i in range(1, mel_timbres_same_spk.shape[0]):
@@ -295,18 +333,6 @@ class MegaADMDataset(torch.utils.data.Dataset):
 
         return batch
 
-
-def make_spk_cutset(cuts: CutSet) -> Dict[str, CutSet]:
-    spk2cuts = {}
-    for cut in tqdm(cuts, desc="Making spk2cuts"):
-        spk = cut.supervisions[0].speaker
-        if spk not in spk2cuts:
-            spk2cuts[spk] = cuts.filter(
-                lambda c: c.supervisions[0].speaker == spk).to_eager()
-
-    return spk2cuts
-
-
 class TTSDataModule(pl.LightningDataModule):
     def __init__(
             self,
@@ -331,15 +357,12 @@ class TTSDataModule(pl.LightningDataModule):
             return True
 
         seed = random.randint(0, 100000)
-        cs_train = load_manifest(f'{self.hparams.ds_path}/cuts_train.jsonl.gz')
-        cs_train = cs_train.filter(filter_duration)
 
-        if not self.hparams.dataset == 'MegaADMDataset':
-            spk2cuts = make_spk_cutset(cs_train)
+        cs_train = load_cutsets(self.hparams.ds_path, 'train').filter(filter_duration)
 
         if self.hparams.dataset == 'TTSDataset' or self.hparams.dataset == 'MegaADMDataset':
             if self.hparams.dataset == 'TTSDataset':
-                dataset = TTSDataset(spk2cuts, self.hparams.ds_path, 10)
+                dataset = TTSDataset(self.hparams.ds_path, 10)
             else:
                 dataset = MegaADMDataset(self.hparams.ds_path)
 
@@ -353,9 +376,8 @@ class TTSDataModule(pl.LightningDataModule):
             )
         elif self.hparams.dataset == 'MegaPLMDataset':
             lr = LengthRegulator(
-                VOCODER_HOP_SIZE, 16000, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
-            dataset = MegaPLMDataset(
-                spk2cuts, self.hparams.ds_path, lr, 10, 1024)
+                VOCODER_HOP_SIZE, VOCODER_SR, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
+            dataset = MegaPLMDataset(self.hparams.ds_path, lr, 10, 1024)
 
             sampler = SimpleCutSampler(
                 cs_train,
@@ -375,11 +397,7 @@ class TTSDataModule(pl.LightningDataModule):
             sampler=sampler,
         )
 
-        cs_valid = load_manifest(f'{self.hparams.ds_path}/cuts_valid.jsonl.gz')
-        cs_valid = cs_valid.filter(filter_duration)
-
-        if not self.hparams.dataset == 'MegaADMDataset':
-            spk2cuts = make_spk_cutset(cs_valid)
+        cs_valid = load_cutsets(self.hparams.ds_path, 'valid').filter(filter_duration)
 
         if self.hparams.dataset == 'TTSDataset' or self.hparams.dataset == 'MegaADMDataset':
             sampler = DynamicBucketingSampler(
@@ -420,62 +438,15 @@ class TTSDataModule(pl.LightningDataModule):
 
 def test():
 
-    cs_valid = load_manifest("data/ds/cuts_valid.jsonl.gz")
-    spk2cuts = make_spk_cutset(cs_valid)
+    cs_valid = load_cutsets('./data/ds/', 'valid')
 
     valid_dl = DataLoader(
-        TTSDataset(spk2cuts, 'data/ds', 10),
+        TTSDataset('data/ds', 10),
         batch_size=None,
         num_workers=0,
         sampler=DynamicBucketingSampler(
             cs_valid,
-            max_duration=10,
-            shuffle=True,
-            num_buckets=5,
-            drop_last=False,
-            seed=20000
-        ),
-    )
-
-    # for batch in valid_dl:
-    #     print(batch['phone_tokens'].shape)
-    #     print(batch['duration_tokens'].shape)
-    #     print(batch['tokens_lens'].shape)
-    #     print(batch['mel_targets'].shape)
-    #     print(batch['mel_target_lens'].shape)
-    #     print(batch['mel_timbres'].shape)
-    #     break
-
-    lr = LengthRegulator(240, 16000, 15)
-
-    valid_dl = DataLoader(
-        MegaPLMDataset(spk2cuts, 'data/ds', lr, 10,
-                       (VOCODER_HOP_SIZE / VOCODER_SR * 1000)),
-        batch_size=None,
-        num_workers=0,
-        sampler=SimpleCutSampler(
-            cs_valid,
-            max_cuts=3,
-            shuffle=True,
-            drop_last=True,
-            seed=20000,
-        ),
-    )
-
-    # for batch in valid_dl:
-    #     print(batch['p_codes'].shape)
-    #     print(batch['tc_latents'].shape)
-    #     print(batch['lens'].shape)
-
-    cs = cs_valid + load_manifest("data/ds/cuts_train.jsonl.gz")
-
-    valid_dl = DataLoader(
-        MegaADMDataset('data/ds'),
-        batch_size=None,
-        num_workers=0,
-        sampler=DynamicBucketingSampler(
-            cs,
-            max_duration=20,
+            max_duration=60,
             shuffle=True,
             num_buckets=5,
             drop_last=False,
@@ -484,7 +455,52 @@ def test():
     )
 
     for batch in valid_dl:
-        pass
+        print(batch['phone_tokens'].shape)
+        print(batch['duration_tokens'].shape)
+        print(batch['tokens_lens'].shape)
+        print(batch['mel_targets'].shape)
+        print(batch['mel_target_lens'].shape)
+        print(batch['mel_timbres'].shape)
+
+    # lr = LengthRegulator(240, VOCODER_SR, 15)
+
+    # valid_dl = DataLoader(
+    #     MegaPLMDataset(spk2cuts, 'data/ds', lr, 10,
+    #                    (VOCODER_HOP_SIZE / VOCODER_SR * 1000)),
+    #     batch_size=None,
+    #     num_workers=0,
+    #     sampler=SimpleCutSampler(
+    #         cs_valid,
+    #         max_cuts=3,
+    #         shuffle=True,
+    #         drop_last=True,
+    #         seed=20000,
+    #     ),
+    # )
+
+    # for batch in valid_dl:
+    #     print(batch['p_codes'].shape)
+    #     print(batch['tc_latents'].shape)
+    #     print(batch['lens'].shape)
+
+    # cs = cs_valid + load_manifest("data/ds/cuts_train.jsonl.gz")
+
+    # valid_dl = DataLoader(
+    #     MegaADMDataset('data/ds'),
+    #     batch_size=None,
+    #     num_workers=0,
+    #     sampler=DynamicBucketingSampler(
+    #         cs,
+    #         max_duration=20,
+    #         shuffle=True,
+    #         num_buckets=5,
+    #         drop_last=False,
+    #         seed=20000
+    #     ),
+    # )
+
+    # for batch in valid_dl:
+    #     pass
         # print(batch['duration_tokens'].shape)
         # print(batch['tc_latents'].shape)
         # print(batch['lens'].shape)

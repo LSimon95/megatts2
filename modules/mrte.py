@@ -13,7 +13,7 @@ from modules.transformer import (TransformerEncoder,
                                  MultiHeadAttention)
 from utils.utils import make_attn_mask
 
-from modules.tokenizer import (
+from modules.feat_extractor import (
     VOCODER_SR,
     VOCODER_MEL_BINS,
     VOCODER_HOP_SIZE
@@ -34,10 +34,8 @@ def create_alignment(base_mat, duration_tokens):
 class LengthRegulator(nn.Module):
     """ Length Regulator from FastSpeech """
 
-    def __init__(self, mel_frames, sample_rate, duration_token_ms):
+    def __init__(self):
         super(LengthRegulator, self).__init__()
-
-        assert (mel_frames / sample_rate * 1000 / duration_token_ms) == 1
 
     def forward(
         self,
@@ -64,7 +62,6 @@ class MRTE(nn.Module):
     def __init__(
             self,
             mel_bins: int = VOCODER_MEL_BINS,
-            mel_frames: int = VOCODER_HOP_SIZE,
             mel_activation: str = 'ReLU',
             mel_kernel_size: int = 3,
             mel_stride: int = 16,
@@ -75,11 +72,8 @@ class MRTE(nn.Module):
             content_n_heads: int = 2,
             content_n_layers: int = 8,
             hidden_size: int = 512,
-            duration_token_ms: float = (
-                VOCODER_HOP_SIZE / VOCODER_SR * 1000),
             phone_vocab_size: int = 320,
             dropout: float = 0.1,
-            sample_rate: int = VOCODER_SR,
     ):
         super(MRTE, self).__init__()
 
@@ -136,8 +130,7 @@ class MRTE(nn.Module):
         self.norm = nn.LayerNorm(hidden_size)
         self.activation = nn.ReLU()
 
-        self.length_regulator = LengthRegulator(
-            mel_frames, sample_rate, duration_token_ms)
+        self.length_regulator = LengthRegulator()
         
 
         # self.test_pllm = TransformerEncoder(
@@ -155,6 +148,7 @@ class MRTE(nn.Module):
             self,
             phone: torch.Tensor,  # (B, T)
             mel: torch.Tensor,  # (B, T, mel_bins)
+            phone_lens: torch.Tensor = None,  # (B,)
     ):
         phone_emb = self.phone_embedding(phone)
         phone_pos = self.phone_pos_embedding(phone_emb)
@@ -162,7 +156,7 @@ class MRTE(nn.Module):
         mel = rearrange(mel, 'B T D -> B D T')
         mel_context = self.mel_encoder(mel)
         mel_context = rearrange(mel_context, 'B D T -> B T D')
-        phone_x = self.phone_encoder(phone_pos)
+        phone_x = self.phone_encoder(phone_pos, phone_lens)
 
         tc_latent = self.mha(phone_x, kv=mel_context)
         tc_latent = self.norm(tc_latent)
@@ -177,7 +171,7 @@ class MRTE(nn.Module):
             phone_lens: torch.Tensor,  # (B,)
             mel: torch.Tensor,  # (B, T, mel_bins)
     ):
-        tc_latent = self.tc_latent(phone, phone_lens, mel)
+        tc_latent = self.tc_latent(phone, mel, phone_lens)
         
         out = self.length_regulator(tc_latent, duration_tokens)
         return out
@@ -185,7 +179,7 @@ class MRTE(nn.Module):
 
 def test():
     lr_in = torch.randn(2, 10, 128)
-    lr = LengthRegulator(240, 16000, 15)
+    lr = LengthRegulator(240, VOCODER_SR, 15)
 
     duration_tokens = torch.tensor(
         [[1, 2, 3, 4], [1, 2, 3, 5]]).to(dtype=torch.int32)
@@ -205,11 +199,8 @@ def test():
         stride = 16,
         n_stacks = 5,
         n_blocks = 2,
-        duration_token_ms = (
-            VOCODER_HOP_SIZE / VOCODER_SR * 1000),
         phone_vocab_size = 320,
         dropout = 0.1,
-        sample_rate = VOCODER_SR,
     )
     mrte = mrte.to('cuda')
 

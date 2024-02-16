@@ -19,13 +19,12 @@ trainer:
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor
       init_args:
         logging_interval: step
-  # ~ 3 epochs
-  max_steps: 600000
+  max_steps: 500000
   # # You might want to limit val batches when evaluating all the metrics, as they are time-consuming
   # limit_val_batches: 100
   accelerator: gpu
   log_every_n_steps: 100
-  val_check_interval: 1500
+  val_check_interval: 3000
   check_val_every_n_epoch: 1
 
   # strategy: ddp
@@ -40,8 +39,7 @@ model:
       mrte:
         class_path: modules.mrte.MRTE
         init_args:
-          mel_bins: 80
-          mel_frames: 256
+          mel_bins: 100
           mel_activation: ReLU
           mel_kernel_size: 3
           mel_stride: 16
@@ -52,10 +50,8 @@ model:
           content_n_heads: 2
           content_n_layers: 8
           hidden_size: 512
-          duration_token_ms: 16.0
           phone_vocab_size: 320
           dropout: 0.1
-          sample_rate: 16000
       vqpe:
         class_path: modules.vqpe.VQProsodyEncoder
         init_args:
@@ -81,7 +77,7 @@ model:
       - 32
       - 64
       - 128
-      freq_length: 80
+      freq_length: 100
       kernel:
       - 3
       - 3
@@ -97,10 +93,10 @@ model:
   class_path: models.trainer.MegaGANTrainer
 data:
   ds_path: /root/autodl-tmp/megatts2/data/ds/
-  max_duration_batch: 60
+  max_duration_batch: 20
   min_duration: 2.1
   max_duration: 20
   num_buckets: 10
-  num_workers: 4
+  num_workers: 8
   class_path: modules.datamodule.TTSDataModule
 ckpt_path: null

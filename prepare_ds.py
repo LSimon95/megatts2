@@ -32,11 +32,10 @@ from lhotse.utils import Seconds, compute_num_frames
 
 from functools import partial
 
-from modules.tokenizer import (
+from modules.feat_extractor import (
     VOCODER_SR,
     VOCODER_HOP_SIZE,
-    MelSpecExtractor,
-    AudioFeatExtraConfig
+    extract_mel_spec
 )
 from models.megatts2 import MegaG
 from modules.datamodule import TTSDataset, make_spk_cutset
@@ -49,6 +48,10 @@ import librosa
 import torch
 import numpy as np
 
+import h5py
+import torchaudio as ta
+
+
 def make_lab(tt, wav):
     id = wav.split('/')[-1].split('.')[0]
     folder = '/'.join(wav.split('/')[:-1])
@@ -56,8 +59,21 @@ def make_lab(tt, wav):
     with open(f'{folder}/{id}.txt', 'r') as f:
         txt = f.read()
 
+        tokens = tt.tokenize(txt)
         with open(f'{folder}/{id}.lab', 'w') as f:
-            f.write(' '.join(tt.tokenize(txt)))
+            f.write(' '.join(tokens))
+
+        return tokens
+
+
+def extract_mel(args):
+    spk, id = args
+    wav = f'data/wavs/{spk}/{id}.wav'
+    y, sr = ta.load(wav)
+    mel_spec = extract_mel_spec(y)
+
+    os.system(f'mkdir -p data/ds/mels/{spk}')
+    torch.save(mel_spec, f'data/ds/mels/{spk}/{id}.pt')
 
 
 class DatasetMaker:
@@ -75,9 +91,7 @@ class DatasetMaker:
         parser.add_argument('--num_workers', type=int,
                             default=4, help='Number of workers')
         parser.add_argument('--test_set_ratio', type=float,
-                            default=0.03, help='Test set ratio')
-        parser.add_argument('--trim_wav', type=bool,
-                            default=False, help='Trim wav by textgrid')
+                            default=0.01, help='Test set ratio')
         parser.add_argument('--generator_ckpt', type=str,
                             default='generator.ckpt', help='Load generator checkpoint')
         parser.add_argument('--generator_config', type=str,
@@ -91,45 +105,69 @@ class DatasetMaker:
         wavs = glob.glob(f'{self.args.wavtxt_path}/**/*.wav', recursive=True)
         tt = TextTokenizer()
 
-        with Pool(self.args.num_workers) as p:
-            for _ in tqdm(p.imap(partial(make_lab, tt), wavs), total=len(wavs)):
-                pass
+        tokens_dict = set()
+        for wav in tqdm(wavs):
+            tokens_dict.update(make_lab(tt, wav))
+
+        open(f'{self.args.ds_path}/tokens.txt', 'w').write(
+            '\n'.join(sorted(list(tokens_dict))))
+        # with Pool(self.args.num_workers) as p:
+        #     for _ in tqdm(p.imap(partial(make_lab, tt), wavs), total=len(wavs)):
+        #         pass
+
+    def save_cuts(self, set_id, recordings, supervisions):
+        set_parts = ['train', 'valid']
+        for i in range(2):
+            recording_set = RecordingSet.from_recordings(recordings[i])
+            supervision_set = SupervisionSet.from_segments(supervisions[i])
+            validate_recordings_and_supervisions(
+                recording_set, supervision_set)
+
+            supervision_set.to_file(
+                f"{self.args.ds_path}/manifests/{set_id}_supervisions_{set_parts[i]}.jsonl.gz")
+            recording_set.to_file(
+                f"{self.args.ds_path}/manifests/{set_id}_recordings_{set_parts[i]}.jsonl.gz")
+
+        manifests = read_manifests_if_cached(
+            dataset_parts=['train', 'valid'],
+            output_dir=f"{self.args.ds_path}/manifests/",
+            prefix=f"{set_id}",
+            suffix='jsonl.gz',
+            types=["recordings", "supervisions"],
+        )
+
+        for partition, m in manifests.items():
+            cut_set = CutSet.from_manifests(
+                recordings=m["recordings"],
+                supervisions=m["supervisions"],
+            )
+
+            cut_set.to_file(
+                f"{self.args.ds_path}/manifests/{set_id}_cuts_{partition}.jsonl.gz")
 
     def make_ds(self):
+        os.system(f'mkdir -p {self.args.ds_path}/manifests')
         tgs = glob.glob(
             f'{self.args.text_grid_path}/**/*.TextGrid', recursive=True)
 
         recordings = [[], []]  # train, test
         supervisions = [[], []]
-        set_name = ['train', 'valid']
         max_duration_token = 0
+        spk_ids = []
 
-        for i, tg in tqdm(enumerate(tgs)):
+        cs_cnt = 0
+        for tg in tqdm(tgs):
             id = tg.split('/')[-1].split('.')[0]
             speaker = tg.split('/')[-2]
+
+            spk_ids.append((speaker, id))
 
             intervals = [i for i in read_textgrid(tg) if (i[3] == 'phones')]
 
             y, sr = librosa.load(
                 f'{self.args.wavtxt_path}/{speaker}/{id}.wav', sr=VOCODER_SR)
 
-            if intervals[0][2] == '':
-                intervals = intervals[1:]
-            if intervals[-1][2] == '':
-                intervals = intervals[:-1]
-            if self.args.trim_wav:
-                start = intervals[0][0]*sr
-                stop = intervals[-1][1]*sr
-                y = y[int(start):int(stop)]
-                y = librosa.util.normalize(y)
-
-                sf.write(
-                    f'{self.args.wavtxt_path}/{speaker}/{id}.wav', y, VOCODER_SR)
-
-            start = intervals[0][0]
-            stop = intervals[-1][1]
-
-            frame_shift=VOCODER_HOP_SIZE / VOCODER_SR
+            frame_shift = VOCODER_HOP_SIZE / VOCODER_SR
             duration = round(y.shape[-1] / VOCODER_SR, ndigits=12)
             n_frames = compute_num_frames(
                 duration=duration,
@@ -141,14 +179,13 @@ class DatasetMaker:
             phone_tokens = []
 
             for i, interval in enumerate(intervals):
-
-                phone_stop = (interval[1] - start)
-                n_frame_interval = int(phone_stop / frame_shift)
+                n_frame_interval = int(interval[1] / frame_shift)
                 duration_tokens.append(n_frame_interval - sum(duration_tokens))
-                phone_tokens.append(interval[2] if interval[2] != '' else '<sil>')
+                phone_tokens.append(interval[2] if interval[2] != '' else '_')
 
             if sum(duration_tokens) > n_frames:
-                print(f'{id} duration_tokens: {sum(duration_tokens)} must <= n_frames: {n_frames}')
+                print(
+                    f'{id} duration_tokens: {sum(duration_tokens)} must <= n_frames: {n_frames}')
                 assert False
 
             recording = Recording.from_file(
@@ -166,10 +203,6 @@ class DatasetMaker:
                 text=text,
             )
 
-            if abs(recording.duration - (stop - start)) > 0.01:
-                print(f'{id} recording duration: {recording.duration} != {stop - start}')
-                assert False
-
             set_id = 0 if i % self.test_set_interval else 1
             recordings[set_id].append(recording)
             supervisions[set_id].append(segment)
@@ -182,54 +215,32 @@ class DatasetMaker:
 
             assert len(duration_tokens) == len(phone_tokens)
 
-        for i in range(2):
-            recording_set = RecordingSet.from_recordings(recordings[i])
-            supervision_set = SupervisionSet.from_segments(supervisions[i])
-            validate_recordings_and_supervisions(
-                recording_set, supervision_set)
+            if len(supervisions[0]) >= 65535:
+                self.save_cuts(str(cs_cnt), recordings, supervisions)
+                recordings = [[], []]
+                supervisions = [[], []]
+                cs_cnt += 1
 
-            supervision_set.to_file(
-                f"{self.args.ds_path}/supervisions_{set_name[i]}.jsonl.gz")
-            recording_set.to_file(
-                f"{self.args.ds_path}/recordings_{set_name[i]}.jsonl.gz")
+        if len(supervisions[0]) > 0:
+            self.save_cuts(str(cs_cnt), recordings, supervisions)
 
-        # Extract features
-        manifests = read_manifests_if_cached(
-            dataset_parts=['train', 'valid'],
-            output_dir=self.args.ds_path,
-            prefix="",
-            suffix='jsonl.gz',
-            types=["recordings", "supervisions"],
-        )
-
-        for partition, m in manifests.items():
-            cut_set = CutSet.from_manifests(
-                recordings=m["recordings"],
-                supervisions=m["supervisions"],
-            )
-
-            # extract
-            cut_set = cut_set.compute_and_store_features(
-                extractor=MelSpecExtractor(AudioFeatExtraConfig()),
-                storage_path=f"{self.args.ds_path}/cuts_{partition}",
-                storage_type=NumpyHdf5Writer,
-                num_jobs=self.args.num_workers,
-            )
-
-            cut_set.to_file(
-                f"{self.args.ds_path}/cuts_{partition}.jsonl.gz")
-            
-        print(f'max_duration_token: {max_duration_token}')
+        # print(f'max_duration_token: {max_duration_token}')
+        # # extract mel
+        # with Pool(self.args.num_workers) as p:
+        #     for _ in tqdm(p.imap(extract_mel, spk_ids), total=len(spk_ids), desc='Extracting mel'):
+        #         pass
 
     def extract_latent(self):
 
         os.system(f'mkdir -p {self.args.ds_path}/latents')
 
-        G = MegaG.from_pretrained(dm.args.generator_ckpt, dm.args.generator_config)
+        G = MegaG.from_pretrained(
+            dm.args.generator_ckpt, dm.args.generator_config)
         G = G.cuda()
         G.eval()
 
-        cs_all = load_manifest(f'{dm.args.ds_path}/cuts_train.jsonl.gz') + load_manifest(f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
+        cs_all = load_manifest(f'{dm.args.ds_path}/cuts_train.jsonl.gz') + \
+            load_manifest(f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
         spk_cs = make_spk_cutset(cs_all)
 
         for spk in spk_cs.keys():
@@ -257,6 +268,7 @@ class DatasetMaker:
 
             np.save(f'{self.args.ds_path}/latents/{spk}/{id}.npy', s2_latent)
 
+
 if __name__ == '__main__':
     dm = DatasetMaker()
 
@@ -267,10 +279,19 @@ if __name__ == '__main__':
         dm.make_ds()
 
         # Test
-        cs_train = load_manifest_lazy(
-            f'{dm.args.ds_path}/cuts_train.jsonl.gz')
-        cs_valid = load_manifest_lazy(
-            f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
+        css = glob.glob(f'{dm.args.ds_path}/manifests/*_cuts_train.jsonl.gz')
+        print('Train manifest:', len(css))
+
+        cs_train = load_manifest(css[0])
+        for i in range(1, len(css)):
+            cs_train = cs_train + load_manifest(css[i])
+
+        css = glob.glob(f'{dm.args.ds_path}/manifests/*_cuts_valid.jsonl.gz')
+        print('Valid manifest:', len(css))
+
+        cs_valid = load_manifest(css[0])
+        for i in range(1, len(css)):
+            cs_valid = cs_valid + load_manifest(css[i])
         cs = cs_train + cs_valid
 
         unique_symbols = set()

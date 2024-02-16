@@ -17,7 +17,8 @@ from utils.utils import instantiate_class
 import glob
 import librosa
 
-from modules.tokenizer import extract_mel_spec, TextTokenizer, VOCODER_SR, VOCODER_HOP_SIZE
+from modules.tokenizer import TextTokenizer
+from modules.feat_extractor import extract_mel_spec, VOCODER_SR, VOCODER_HOP_SIZE
 from modules.datamodule import TokensCollector
 
 import numpy as np
@@ -89,7 +90,7 @@ class MegaG(nn.Module):
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
 
-            G_config = init = config['model']['G']
+            G_config = config['model']['G']
 
             mrte = instantiate_class(
                 args=(), init=G_config['init_args']['mrte'])
@@ -316,7 +317,7 @@ class Megatts(nn.Module):
         self.ttc = TokensCollector(symbol_table)
 
         self.lr = LengthRegulator(
-            VOCODER_HOP_SIZE, 16000, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
+            VOCODER_HOP_SIZE, VOCODER_SR, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
 
         self.hifi_gan = HIFIGAN.from_hparams(
             source="speechbrain/tts-hifigan-libritts-16kHz")
