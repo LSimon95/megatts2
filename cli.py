@@ -3,7 +3,6 @@ from lightning.pytorch.cli import LightningCLI
 
 from models.trainer import MegaGANTrainer, MegaPLMTrainer, MegaADMTrainer
 from modules.datamodule import TTSDataModule, test
-from modules.feat_extractor import test
 
 
 

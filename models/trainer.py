@@ -11,7 +11,7 @@ import math
 
 from .megatts2 import MegaG, MegaPLM, MegaADM
 from modules.dscrm import Discriminator
-from modules.feat_extractor import VOCODER_SR
+from modules.feat_extractor import VOCODER_SR, load_bigvgan_model, mel2wav
 
 from utils.utils import plot_spectrogram_to_numpy
 
@@ -27,6 +27,7 @@ class MegaGANTrainer(pl.LightningModule):
             G_commit_loss_coeff: float = 10,
             G_vq_loss_coeff: float = 10,
             G_adv_loss_coeff: float = 1.0,
+            bigvgan_ckpt_dir: str = None,
 
             train_dtype: str = "float32",
             **kwargs
@@ -168,6 +169,25 @@ class MegaGANTrainer(pl.LightningModule):
             [x["loss_re"] for x in outputs]))
 
         self.log("val/loss_re", loss_re, sync_dist=True)
+
+        bigvgan = load_bigvgan_model(self.hparams.bigvgan_ckpt_dir)
+
+        audio_target = mel2wav(bigvgan, mel.unsqueeze(0).cpu())
+        audio_hat = mel2wav(bigvgan, mel_hat.unsqueeze(0).cpu())
+
+        self.logger.experiment.add_audio(
+            "val/audio_target",
+            audio_target[0],
+            self.global_step,
+            sample_rate=VOCODER_SR,
+        )
+
+        self.logger.experiment.add_audio(
+            "val/audio_hat",
+            audio_hat[0],
+            self.global_step,
+            sample_rate=VOCODER_SR,
+        )
 
         self.validation_step_outputs = []
 

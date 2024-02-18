@@ -80,7 +80,7 @@ class TTSDataset(torch.utils.data.Dataset):
     def __init__(
             self,
             ds_path: str,
-            n_same_spk_samples: int = 2
+            n_same_spk_samples: int = 3
     ):
         super().__init__()
         self.ds_path = ds_path
@@ -114,7 +114,7 @@ class TTSDataset(torch.utils.data.Dataset):
         mels_padded = []
         for i in range(len(mels)):
             mels_padded.append(F.pad(
-                mels[i], (0, max_len - mel_lens[i]), mode='constant', value=0))
+                mels[i], (0, max_len - mel_lens[i]), mode='constant', value=-23))
         
         mels = torch.stack(mels_padded).transpose(1, 2)
         mel_lens = torch.Tensor(mel_lens).to(dtype=torch.int32)
@@ -136,7 +136,7 @@ class TTSDataset(torch.utils.data.Dataset):
 
         mel_timbres_list = []
         mel_timbre_lens_list = []
-        n_sample = random.randint(2, self.n_same_spk_samples)
+        n_sample_expect = random.randint(2, self.n_same_spk_samples)
         for cut in cuts:
 
             spk = cut.supervisions[0].speaker
@@ -145,6 +145,8 @@ class TTSDataset(torch.utils.data.Dataset):
             if len(mel_pts) >= 2:
                 # Remove the current cut
                 mel_pts.remove(cut.supervisions[0].id)
+                n_sample = min(n_sample_expect, len(mel_pts))
+                mel_pts = random.sample(mel_pts, n_sample)
             
             same_spk_cuts = [(spk, pt) for pt in mel_pts]
             mel_timbres_same_spk, mel_timbre_lens_same_spk = self.collect_mels(same_spk_cuts)

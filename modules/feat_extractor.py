@@ -1,6 +1,7 @@
 import torch
 
 import numpy as np
+import json
 
 from lhotse.features import FeatureExtractor
 from lhotse.utils import Seconds, compute_num_frames
@@ -9,6 +10,9 @@ from dataclasses import dataclass
 from typing import Union
 
 from bigvgan.meldataset import mel_spectrogram
+from bigvgan.models import BigVGAN as Generator
+from bigvgan.inference import load_checkpoint
+from bigvgan.env import AttrDict
 
 VOCODER_SR = 24000
 VOCODER_HOP_SIZE = 256
@@ -36,8 +40,23 @@ def extract_mel_spec(samples):
         center=False
     )
 
+def load_bigvgan_model(ckpt_dir):
+    with open(f'{ckpt_dir}/config.json') as f:
+        data = f.read()
+    h = AttrDict(json.loads(data))
 
+    generator = Generator(h).to('cpu')
+    state_dict_g = load_checkpoint(f'{ckpt_dir}/g_05000000.zip', 'cpu')
+    generator.load_state_dict(state_dict_g['generator'])
 
+    generator.eval()
+    generator.remove_weight_norm()
+
+    return generator
+
+def mel2wav(generator, mel):
+    with torch.no_grad():
+        return generator(mel)
 
 # class MelSpecExtractor(FeatureExtractor):
 #     name = "mel_spec"
