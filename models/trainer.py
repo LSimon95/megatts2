@@ -152,6 +152,11 @@ class MegaGANTrainer(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         outputs = self.validation_step_outputs
+        loss_re = torch.mean(torch.stack(
+                [x["loss_re"] for x in outputs]))
+
+        self.log("val/loss_re", loss_re.detach(), sync_dist=True)
+
         if self.global_rank == 0:
 
             mel = outputs[0]["y"].transpose(0, 1)
@@ -164,11 +169,6 @@ class MegaGANTrainer(pl.LightningModule):
                 self.global_step,
                 dataformats="HWC",
             )
-
-            loss_re = torch.mean(torch.stack(
-                [x["loss_re"] for x in outputs]))
-
-            self.log("val/loss_re", loss_re) # sync_dist=False or will raise an error of cookbook check parameter's number
 
             bigvgan = load_bigvgan_model(self.hparams.bigvgan_ckpt_dir)
 
@@ -189,7 +189,9 @@ class MegaGANTrainer(pl.LightningModule):
                 sample_rate=VOCODER_SR,
             )
 
-            self.validation_step_outputs = []
+        self.validation_step_outputs = []
+
+
 
 class MegaPLMTrainer(pl.LightningModule):
     def __init__(
