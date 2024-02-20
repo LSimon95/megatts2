@@ -23,7 +23,6 @@ from modules.datamodule import TokensCollector
 
 import numpy as np
 from modules.mrte import LengthRegulator
-from speechbrain.pretrained import HIFIGAN
 
 import torchaudio
 
@@ -318,10 +317,6 @@ class Megatts(nn.Module):
 
         self.lr = LengthRegulator(
             VOCODER_HOP_SIZE, VOCODER_SR, (VOCODER_HOP_SIZE / VOCODER_SR * 1000))
-
-        self.hifi_gan = HIFIGAN.from_hparams(
-            source="speechbrain/tts-hifigan-libritts-16kHz")
-        self.hifi_gan.eval()
 
     def forward(
             self,

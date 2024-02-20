@@ -67,7 +67,7 @@ class VQProsodyEncoder(nn.Module):
         vq_loss = F.mse_loss(ze.detach(), zq)
 
         zq = self.up_sample(zq)
-        zq = rearrange(zq, "B (S D) T -> B (S T) D", S=8).contiguous()[:, :mel_len, :]
+        zq = rearrange(zq, "B (S D) T -> B (S T) D", S=self.stride).contiguous()[:, :mel_len, :]
         return zq, commit_loss, vq_loss, codes
 
 

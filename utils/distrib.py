@@ -49,7 +49,7 @@ def _check_number_of_params(params: tp.List[torch.Tensor]):
         # If not all the workers have the same number, for at least one of them,
         # this inequality will be verified.
         raise RuntimeError(f"Mismatch in number of params: ours is {len(params)}, "
-                           "at least one worker has a different one.")
+                           f"at least one worker has a different one.{tensor.item()} {world_size()}")
 
 
 def broadcast_tensors(tensors: tp.Iterable[torch.Tensor], src: int = 0):
