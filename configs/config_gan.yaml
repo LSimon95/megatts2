@@ -24,7 +24,7 @@ trainer:
   # limit_val_batches: 100
   accelerator: gpu
   log_every_n_steps: 100
-  val_check_interval: 10
+  val_check_interval: 5000
   check_val_every_n_epoch: 1
 
   strategy: ddp_find_unused_parameters_true
