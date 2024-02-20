@@ -142,7 +142,7 @@ class MegaGANTrainer(pl.LightningModule):
             self.G.eval()
             y_hat, _, _ = self(batch)
 
-        loss_re = F.l1_loss(y, y_hat)
+        loss_re = F.l1_loss(y, y_hat.detach())
 
         self.validation_step_outputs.append({
             "y": y[0],
@@ -165,31 +165,31 @@ class MegaGANTrainer(pl.LightningModule):
                 dataformats="HWC",
             )
 
-        loss_re = torch.mean(torch.stack(
-            [x["loss_re"] for x in outputs]))
+            loss_re = torch.mean(torch.stack(
+                [x["loss_re"] for x in outputs]))
 
-        self.log("val/loss_re", loss_re, sync_dist=True)
+            self.log("val/loss_re", loss_re) # sync_dist=False or will raise an error of cookbook check parameter's number
 
-        bigvgan = load_bigvgan_model(self.hparams.bigvgan_ckpt_dir)
+            bigvgan = load_bigvgan_model(self.hparams.bigvgan_ckpt_dir)
 
-        audio_target = mel2wav(bigvgan, mel.unsqueeze(0).cpu())
-        audio_hat = mel2wav(bigvgan, mel_hat.unsqueeze(0).cpu())
+            audio_target = mel2wav(bigvgan, mel.unsqueeze(0).cpu())
+            audio_hat = mel2wav(bigvgan, mel_hat.unsqueeze(0).cpu())
 
-        self.logger.experiment.add_audio(
-            "val/audio_target",
-            audio_target[0],
-            self.global_step,
-            sample_rate=VOCODER_SR,
-        )
+            self.logger.experiment.add_audio(
+                "val/audio_target",
+                audio_target[0],
+                self.global_step,
+                sample_rate=VOCODER_SR,
+            )
 
-        self.logger.experiment.add_audio(
-            "val/audio_hat",
-            audio_hat[0],
-            self.global_step,
-            sample_rate=VOCODER_SR,
-        )
+            self.logger.experiment.add_audio(
+                "val/audio_hat",
+                audio_hat[0],
+                self.global_step,
+                sample_rate=VOCODER_SR,
+            )
 
-        self.validation_step_outputs = []
+            self.validation_step_outputs = []
 
 class MegaPLMTrainer(pl.LightningModule):
     def __init__(

@@ -38,7 +38,7 @@ from modules.feat_extractor import (
     extract_mel_spec
 )
 from models.megatts2 import MegaG
-from modules.datamodule import TTSDataset, make_spk_cutset
+from modules.datamodule import TTSDataset
 
 from utils.symbol_table import SymbolTable
 
@@ -50,6 +50,8 @@ import numpy as np
 
 import h5py
 import torchaudio as ta
+
+import os
 
 
 def make_lab(tt, wav):
@@ -67,9 +69,10 @@ def make_lab(tt, wav):
 
 
 def extract_mel(args):
-    spk, id = args
+    ds_path, spk, id = args
     wav = f'data/wavs/{spk}/{id}.wav'
     y, sr = ta.load(wav)
+    y = ta.transforms.Resample(sr, VOCODER_SR)(y)
     mel_spec = extract_mel_spec(y)
 
     os.system(f'mkdir -p data/ds/mels/{spk}')
@@ -80,6 +83,8 @@ class DatasetMaker:
     def __init__(self):
         parser = argparse.ArgumentParser()
 
+        parser.add_argument('--prefix', type=str, default='ds',
+                            help='Prefix of dataset')
         parser.add_argument('--stage', type=int, default=0,
                             help='Stage to start from')
         parser.add_argument('--wavtxt_path', type=str,
@@ -100,6 +105,9 @@ class DatasetMaker:
         self.args = parser.parse_args()
 
         self.test_set_interval = int(1 / self.args.test_set_ratio)
+
+        os.system(f'mkdir -p {self.args.ds_path}/mels')
+        os.system(f'mkdir -p {self.args.ds_path}/manifests')
 
     def make_labs(self):
         wavs = glob.glob(f'{self.args.wavtxt_path}/**/*.wav', recursive=True)
@@ -149,6 +157,8 @@ class DatasetMaker:
         os.system(f'mkdir -p {self.args.ds_path}/manifests')
         tgs = glob.glob(
             f'{self.args.text_grid_path}/**/*.TextGrid', recursive=True)
+        
+        tgs = [tg for tg in tgs if tg.split('/')[-1].startswith('S0')]
 
         recordings = [[], []]  # train, test
         supervisions = [[], []]
@@ -160,7 +170,7 @@ class DatasetMaker:
             id = tg.split('/')[-1].split('.')[0]
             speaker = tg.split('/')[-2]
 
-            spk_ids.append((speaker, id))
+            spk_ids.append((self.args.ds_path, speaker, id))
 
             intervals = [i for i in read_textgrid(tg) if (i[3] == 'phones')]
 
@@ -216,16 +226,16 @@ class DatasetMaker:
             assert len(duration_tokens) == len(phone_tokens)
 
             if len(supervisions[0]) >= 65535:
-                self.save_cuts(str(cs_cnt), recordings, supervisions)
+                self.save_cuts(self.args.prefix + '_' + str(cs_cnt), recordings, supervisions)
                 recordings = [[], []]
                 supervisions = [[], []]
                 cs_cnt += 1
 
         if len(supervisions[0]) > 0:
-            self.save_cuts(str(cs_cnt), recordings, supervisions)
+            self.save_cuts(self.args.prefix + '_' + str(cs_cnt), recordings, supervisions)
 
-        # print(f'max_duration_token: {max_duration_token}')
-        # # extract mel
+        print(f'max_duration_token: {max_duration_token}')
+        # extract mel
         # with Pool(self.args.num_workers) as p:
         #     for _ in tqdm(p.imap(extract_mel, spk_ids), total=len(spk_ids), desc='Extracting mel'):
         #         pass
@@ -241,10 +251,7 @@ class DatasetMaker:
 
         cs_all = load_manifest(f'{dm.args.ds_path}/cuts_train.jsonl.gz') + \
             load_manifest(f'{dm.args.ds_path}/cuts_valid.jsonl.gz')
-        spk_cs = make_spk_cutset(cs_all)
-
-        for spk in spk_cs.keys():
-            os.system(f'mkdir -p {self.args.ds_path}/latents/{spk}')
+        spk_cs = None
 
         ttsds = TTSDataset(spk_cs, f'{dm.args.ds_path}', 10)
 
