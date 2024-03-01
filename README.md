@@ -31,6 +31,16 @@ Training procedure refers to Pytorch-lightning
 ## Infer test
 `python infer.py`
 
+## Citing
+```bibtex
+@misc{2307.07218,
+Author = {Ziyue Jiang and Jinglin Liu and Yi Ren and Jinzheng He and Chen Zhang and Zhenhui Ye and Pengfei Wei and Chunfeng Wang and Xiang Yin and Zejun Ma and Zhou Zhao},
+Title = {Mega-TTS 2: Zero-Shot Text-to-Speech with Arbitrary Length Speech Prompts},
+Year = {2023},
+Eprint = {arXiv:2307.07218},
+}
+```
+
 ## License
 - MIT
 - Support by Simon of [ZideAI](https://zideai.com/)
