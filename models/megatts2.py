@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -323,18 +325,16 @@ class Megatts(nn.Module):
         self.hifi_gan.eval()
 
     def forward(
-            self,
-            wavs_dir: str,
-            text: str,
+        self, 
+        audio_paths: List[str], 
+        text: str
     ):
         mels_prompt = None
         # Make mrte mels
-        wavs = glob.glob(f'{wavs_dir}/*.wav')
         mels = torch.empty(0)
-        for wav in wavs:
-            y = librosa.load(wav, sr=HIFIGAN_SR)[0]
+        for audio_path in audio_paths:
+            y = librosa.load(audio_path, sr=HIFIGAN_SR)[0]
             y = librosa.util.normalize(y)
-            # y = librosa.effects.trim(y, top_db=20)[0]
             y = torch.from_numpy(y)
 
             mel_spec = extract_mel_spec(y).transpose(0, 1)
@@ -346,30 +346,26 @@ class Megatts(nn.Module):
         mels = mels.unsqueeze(0)
 
         # G2P
-        phone_tokens = self.ttc.phone2token(
-            self.tt.tokenize_lty(self.tt.tokenize(text)))
+        phone_tokens = self.ttc.phone2token(self.tt.tokenize_lty(self.tt.tokenize(text)))
         phone_tokens = phone_tokens.unsqueeze(0)
 
         with torch.no_grad():
             tc_latent = self.generator.mrte.tc_latent(phone_tokens, mels)
             dt = self.adm.infer(tc_latent)[..., 0]
             tc_latent_expand = self.lr(tc_latent, dt)
-            tc_latent = F.max_pool1d(tc_latent_expand.transpose(
-                1, 2), 8, ceil_mode=True).transpose(1, 2)
+            tc_latent = F.max_pool1d(tc_latent_expand.transpose(1, 2), 8, ceil_mode=True).transpose(1, 2)
             p_codes = self.plm.infer(tc_latent)
 
             zq = self.generator.vqpe.vq.decode(p_codes.unsqueeze(0))
-            zq = rearrange(
-                zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, 8, -1)
+            zq = rearrange(zq, "B D T -> B T D").unsqueeze(2).contiguous().expand(-1, -1, 8, -1)
             zq = rearrange(zq, "B T S D -> B (T S) D")
-            x = torch.cat(
-                [tc_latent_expand, zq[:, :tc_latent_expand.shape[1], :]], dim=-1)
+            x = torch.cat([tc_latent_expand, zq[:, :tc_latent_expand.shape[1], :]], dim=-1)
             x = rearrange(x, 'B T D -> B D T')
             x = self.generator.decoder(x)
 
             audio = self.hifi_gan.decode_batch(x.cpu())
-            audio_prompt = self.hifi_gan.decode_batch(
-                mels_prompt.unsqueeze(0).transpose(1, 2).cpu())
+            audio_prompt = self.hifi_gan.decode_batch(mels_prompt.unsqueeze(0).transpose(1, 2).cpu())
             audio = torch.cat([audio_prompt, audio], dim=-1)
 
-            torchaudio.save('test.wav', audio[0], HIFIGAN_SR)
+            return audio.squeeze()
+
