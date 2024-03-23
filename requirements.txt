@@ -4,3 +4,4 @@ torchvision==0.16.0+cu118
 lightning==2.1.2
 lhotse==1.17.0
 h5py
+gradio
